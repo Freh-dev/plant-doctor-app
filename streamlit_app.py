@@ -4,7 +4,6 @@ import tensorflow as tf
 import numpy as np
 from PIL import Image
 import json
-import tarfile
 import os
 import chatbot_helper  # Your existing helper
 
@@ -15,15 +14,28 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load model and class names
+# Load model and class names - UPDATED FOR ULTRA LIGHT MODEL
 @st.cache_resource
 def load_model():
-    return tf.keras.models.load_model("improved_model.keras")
+    try:
+        # Use the ultra_light_model.keras (109 KB) that fits Streamlit limits
+        model = tf.keras.models.load_model("ultra_light_model.keras")
+        st.sidebar.success("✅ Ultra Light Model Loaded (109 KB)")
+        return model
+    except Exception as e:
+        st.error(f"❌ Error loading model: {e}")
+        st.info("📋 Make sure 'ultra_light_model.keras' is in your repository")
+        return None
 
 @st.cache_data
 def load_class_names():
-    with open("class_names_improved.json", "r") as f:
-        return json.load(f)
+    try:
+        with open("class_names_improved.json", "r") as f:
+            class_names = json.load(f)
+        return class_names
+    except Exception as e:
+        st.error(f"❌ Error loading class names: {e}")
+        return []
 
 # Load resources
 model = load_model()
@@ -32,19 +44,27 @@ img_size = (150, 150)
 
 def predict_image(image):
     """Predict plant disease from image"""
-    img = image.resize(img_size)
-    img_array = np.array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    prediction = model.predict(img_array, verbose=0)
-    predicted_class = class_names[np.argmax(prediction)]
-    confidence = float(np.max(prediction))
-    
-    return predicted_class, confidence
+    try:
+        img = image.resize(img_size)
+        img_array = np.array(img) / 255.0
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        prediction = model.predict(img_array, verbose=0)
+        predicted_class = class_names[np.argmax(prediction)]
+        confidence = float(np.max(prediction))
+        
+        return predicted_class, confidence, None
+    except Exception as e:
+        return None, None, str(e)
 
 # App UI
 st.title("🌿 Plant Doctor")
 st.markdown("Upload a photo of your plant leaf to detect diseases and get treatment advice!")
+
+# Check if model loaded successfully
+if model is None or not class_names:
+    st.warning("⚠️ Model not loaded. Please check your files.")
+    st.stop()
 
 # File uploader
 uploaded_file = st.file_uploader(
@@ -65,26 +85,29 @@ if uploaded_file is not None:
     if st.button("🔍 Analyze Plant", type="primary"):
         with st.spinner("Analyzing..."):
             # Make prediction
-            disease, confidence = predict_image(image)
+            disease, confidence, error = predict_image(image)
             
-            with col2:
-                st.subheader("📊 Diagnosis Results")
-                st.success(f"**Disease:** {disease}")
-                st.success(f"**Confidence:** {confidence:.2%}")
+            if error:
+                st.error(f"❌ Prediction error: {error}")
+            else:
+                with col2:
+                    st.subheader("📊 Diagnosis Results")
+                    st.success(f"**Disease:** {disease}")
+                    st.success(f"**Confidence:** {confidence:.2%}")
+                    
+                    # Get plant name
+                    if '_' in disease:
+                        plant_name = disease.split('_')[0]
+                        st.info(f"**Plant Type:** {plant_name}")
+                    else:
+                        plant_name = "plant"
                 
-                # Get plant name
-                if '_' in disease:
-                    plant_name = disease.split('_')[0]
-                    st.info(f"**Plant Type:** {plant_name}")
-                else:
-                    plant_name = "plant"
-            
-            # Get AI advice
-            with st.spinner("Getting treatment advice..."):
-                advice = chatbot_helper.generate_advice(plant_name, disease)
-                
-            st.subheader("💡 Treatment Advice")
-            st.info(advice)
+                # Get AI advice
+                with st.spinner("Getting treatment advice..."):
+                    advice = chatbot_helper.generate_advice(plant_name, disease)
+                    
+                st.subheader("💡 Treatment Advice")
+                st.info(advice)
 
 # Sidebar with instructions
 with st.sidebar:
@@ -115,6 +138,11 @@ with st.sidebar:
     - Grapes
     - And many more!
     """)
+    
+    st.header("📊 Model Info")
+    st.metric("Model Size", "109 KB")
+    st.metric("File", "ultra_light_model.keras")
+    st.metric("Status", "✅ Deployment Ready")
 
 # Footer
 st.markdown("---")

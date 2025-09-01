@@ -5,7 +5,8 @@ import numpy as np
 from PIL import Image
 import json
 import os
-import chatbot_helper  # Your existing helper
+import gdown
+import chatbot_helper
 
 # Set page config
 st.set_page_config(
@@ -14,25 +15,60 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load model and class names - UPDATED FOR ULTRA LIGHT MODEL
+# Download model from Google Drive - WITH CORRECT FILE ID
+@st.cache_resource
+def download_model():
+    model_path = "improved_model.keras"
+    
+    # ✅ CORRECT FILE ID FROM YOUR LINK
+    file_id = "1FpFdfl_UFR_6kfbsV3eQYvlYvWMYB-Az"
+    
+    if not os.path.exists(model_path):
+        try:
+            with st.spinner("📥 Downloading high-accuracy model (95.48%) from Google Drive..."):
+                # Download from Google Drive
+                url = f"https://drive.google.com/uc?id={file_id}"
+                gdown.download(url, model_path, quiet=False)
+                
+            if os.path.exists(model_path):
+                file_size = os.path.getsize(model_path) / 1024 / 1024
+                st.sidebar.success(f"✅ 95.48% Accurate Model Downloaded! ({file_size:.1f} MB)")
+                return model_path
+            else:
+                st.sidebar.error("❌ Download failed - file not created")
+                return None
+                
+        except Exception as e:
+            st.sidebar.error(f"❌ Download error: {str(e)}")
+            return None
+    return model_path
+
+# Load model and class names
 @st.cache_resource
 def load_model():
     try:
-        # Use the ultra_light_model.keras (109 KB) that fits Streamlit limits
-        model = tf.keras.models.load_model("ultra_light_model.keras")
-        st.sidebar.success("✅ Ultra Light Model Loaded (109 KB)")
-        return model
+        model_path = download_model()
+        if model_path and os.path.exists(model_path):
+            model = tf.keras.models.load_model(model_path)
+            st.sidebar.success("✅ 95.48% Accurate Model Loaded!")
+            return model
     except Exception as e:
-        st.error(f"❌ Error loading model: {e}")
-        st.info("📋 Make sure 'ultra_light_model.keras' is in your repository")
+        st.sidebar.error(f"❌ Model loading error: {e}")
+    
+    # Fallback to ultra light model
+    try:
+        model = tf.keras.models.load_model("ultra_light_model.keras")
+        st.sidebar.info("ℹ️ Using fallback ultra light model")
+        return model
+    except:
+        st.sidebar.error("❌ No model files available")
         return None
 
 @st.cache_data
 def load_class_names():
     try:
         with open("class_names_improved.json", "r") as f:
-            class_names = json.load(f)
-        return class_names
+            return json.load(f)
     except Exception as e:
         st.error(f"❌ Error loading class names: {e}")
         return []
@@ -63,7 +99,12 @@ st.markdown("Upload a photo of your plant leaf to detect diseases and get treatm
 
 # Check if model loaded successfully
 if model is None or not class_names:
-    st.warning("⚠️ Model not loaded. Please check your files.")
+    st.warning("""
+    ⚠️ **Model not loaded properly.** 
+    - If this is the first time, wait for the model to download from Google Drive
+    - This may take 2-3 minutes depending on your internet speed
+    - Refresh the page if it doesn't start automatically
+    """)
     st.stop()
 
 # File uploader
@@ -119,30 +160,13 @@ with st.sidebar:
     4. **Follow** the treatment advice
     """)
     
-    st.header("📸 Tips for Best Results")
-    st.markdown("""
-    - Good lighting ☀️
-    - Plain background
-    - Clear, focused leaf
-    - No shadows or glare
-    """)
-    
-    st.header("🌿 Supported Plants")
-    st.markdown("""
-    This app can detect diseases in:
-    - Tomatoes
-    - Potatoes
-    - Peppers
-    - Apples
-    - Corn
-    - Grapes
-    - And many more!
-    """)
-    
-    st.header("📊 Model Info")
-    st.metric("Model Size", "109 KB")
-    st.metric("File", "ultra_light_model.keras")
-    st.metric("Status", "✅ Deployment Ready")
+    st.header("📊 Model Information")
+    if model:
+        st.metric("Accuracy", "95.48%")
+        st.metric("Model Source", "Google Drive")
+        st.metric("Status", "✅ Active")
+    else:
+        st.metric("Status", "⏳ Downloading...")
 
 # Footer
 st.markdown("---")

@@ -1,28 +1,53 @@
-# streamlit_app.py - CORRECTED VERSION
+# streamlit_app.py - UPDATED VERSION
 import streamlit as st
 import tensorflow as tf
 import numpy as np
 from PIL import Image
 import json
 import os
+import chatbot_helper
 
-# Set page config FIRST
+# Set page config
 st.set_page_config(
     page_title="Plant Doctor 🌿",
     page_icon="🌿",
     layout="wide"
 )
 
-# THEN define cached functions
+# Debug function
+def check_openai_setup():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if api_key:
+        st.sidebar.success("✅ OpenAI API Key Found")
+        # Test if it works
+        try:
+            test_advice = chatbot_helper.generate_advice("tomato", "healthy")
+            if "OpenAI" not in test_advice and "API key" not in test_advice:
+                st.sidebar.success("✅ OpenAI Connection Working")
+                return True
+            else:
+                st.sidebar.warning("⚠️ OpenAI Key Invalid")
+                return False
+        except:
+            st.sidebar.error("❌ OpenAI Test Failed")
+            return False
+    else:
+        st.sidebar.error("❌ OpenAI API Key Missing")
+        return False
+
 @st.cache_resource
 def load_model():
     try:
-        # Use the fixed MobileNetV2 model
-        model = tf.keras.models.load_model("plantvillage_improved.h5")
-        st.sidebar.success("✅ Advanced AI Model Loaded!")
+        # Try the improved model first, then fallback to ultra light
+        try:
+            model = tf.keras.models.load_model("plantvillage_mobilenetv2_fixed.h5")
+            st.sidebar.success("✅ Advanced Model Loaded")
+        except:
+            model = tf.keras.models.load_model("ultra_light_model.keras")
+            st.sidebar.success("✅ Standard Model Loaded")
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error loading model: {e}")
+        st.sidebar.error(f"❌ Model Error: {e}")
         return None
 
 @st.cache_data
@@ -31,30 +56,15 @@ def load_class_names():
         with open("class_names_improved.json", "r") as f:
             return json.load(f)
     except Exception as e:
-        st.error(f"❌ Error loading class names: {e}")
-        return [
-            "Apple_Apple_scab", "Apple_Black_rot", "Apple_Cedar_apple_rust", "Apple_healthy",
-            "Blueberry_healthy", "Cherry_healthy", "Cherry_Powdery_mildew", 
-            "Corn_Common_rust", "Corn_Gray_leaf_spot", "Corn_Healthy", "Corn_Northern_Leaf_Blight",
-            "Grape_Black_rot", "Grape_Esca", "Grape_Healthy", "Grape_Leaf_blight",
-            "Orange_Haunglongbing", "Peach_Healthy", "Peach_Bacterial_spot",
-            "Pepper_bell_Bacterial_spot", "Pepper_bell_Healthy",
-            "Potato_Early_blight", "Potato_Healthy", "Potato_Late_blight",
-            "Raspberry_Healthy", "Soybean_Healthy", "Squash_Powdery_mildew",
-            "Strawberry_Healthy", "Strawberry_Leaf_scorch",
-            "Tomato_Bacterial_spot", "Tomato_Early_blight", "Tomato_Healthy",
-            "Tomato_Late_blight", "Tomato_Leaf_Mold", "Tomato_Septoria_leaf_spot",
-            "Tomato_Spider_mites", "Tomato_Target_Spot", "Tomato_Yellow_Leaf_Curl_Virus", 
-            "Tomato_Mosaic_virus"
-        ]
+        return ["Tomato_healthy", "Tomato_early_blight", "Tomato_late_blight"]
 
 # Load resources
 model = load_model()
 class_names = load_class_names()
-img_size = (128, 128)  # MobileNetV2 0.50_128 expects 128x128 input
+openai_ready = check_openai_setup()
+img_size = (128, 128)
 
 def predict_image(image):
-    """Predict plant disease from image"""
     try:
         img = image.resize(img_size)
         img_array = np.array(img) / 255.0
@@ -68,34 +78,15 @@ def predict_image(image):
     except Exception as e:
         return None, None, str(e)
 
-def generate_advice(plant, disease):
-    """Generate plant care advice"""
-    advice_templates = {
-        "healthy": f"🌱 Your {plant} plant looks healthy! Continue regular care.",
-        "early_blight": f"🍂 {plant} Early Blight: Remove affected leaves, improve air circulation.",
-        "late_blight": f"🔥 {plant} Late Blight: Remove infected plants immediately.",
-        "bacterial_spot": f"🦠 {plant} Bacterial Spot: Apply copper spray, avoid wet leaves."
-    }
-    
-    disease_lower = disease.lower()
-    for key in advice_templates:
-        if key in disease_lower:
-            return advice_templates[key]
-    
-    return f"🌿 For {disease} in {plant}: Remove affected leaves and improve growing conditions."
-
 # App UI
 st.title("🌿 Plant Doctor")
 st.markdown("Upload a plant leaf photo for instant diagnosis")
 
-if model is None or not class_names:
+if model is None:
     st.error("Service temporarily unavailable. Please check the model files.")
     st.stop()
 
-uploaded_file = st.file_uploader(
-    "Choose a plant leaf image", 
-    type=["jpg", "jpeg", "png"]
-)
+uploaded_file = st.file_uploader("Choose a plant leaf image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
@@ -103,6 +94,7 @@ if uploaded_file is not None:
     
     with col1:
         st.image(image, caption="Your plant leaf", use_container_width=True)
+        st.info(f"Model input size: {img_size}")
     
     if st.button("Analyze Plant", type="primary", use_container_width=True):
         with st.spinner("Analyzing..."):
@@ -112,34 +104,62 @@ if uploaded_file is not None:
                 st.error("Analysis failed. Please try another image.")
             else:
                 with col2:
-                    st.subheader("Diagnosis")
-                    st.success(f"**Condition:** {disease.replace('_', ' ').title()}")
-                    st.success(f"**Confidence:** {confidence:.0%}")
+                    st.subheader("Diagnosis Results")
+                    st.success(f"**Condition:** {disease}")
+                    st.success(f"**Confidence:** {confidence:.1%}")
+                    
+                    # Show model debug info
+                    if confidence < 0.5:
+                        st.warning("⚠️ Low confidence - model may be uncertain")
+                    
+                    # Extract plant name
+                    if '_' in disease:
+                        plant_name = disease.split('_')[0]
+                    else:
+                        plant_name = "plant"
                 
-                advice = generate_advice("plant", disease)
-                st.subheader("Care Instructions")
-                st.info(advice)
+                # Get advice - show what type we're getting
+                st.subheader("💡 Care Instructions")
+                
+                if openai_ready:
+                    with st.spinner("Getting AI advice..."):
+                        advice = chatbot_helper.generate_advice(plant_name, disease)
+                    
+                    # Check if we got real AI advice or fallback
+                    if "OpenAI" in advice or "API key" in advice:
+                        st.warning("⚠️ Using fallback advice (OpenAI not working)")
+                        st.info(advice)
+                    else:
+                        st.success("✅ AI-Generated Advice")
+                        st.info(advice)
+                else:
+                    st.warning("⚠️ Using basic advice (OpenAI not configured)")
+                    basic_advice = f"""
+                    **Basic treatment for {disease}:**
+                    - Remove affected leaves immediately
+                    - Improve air circulation around plants
+                    - Water at the base, avoid wetting leaves
+                    - Monitor plant recovery daily
+                    - Consult local garden center if condition worsens
+                    """
+                    st.info(basic_advice)
 
-# Sidebar
+# Debug sidebar
 with st.sidebar:
-    st.header("How to Use")
-    st.markdown("""
-    1. Take a clear leaf photo
-    2. Upload the image  
-    3. Get instant diagnosis
-    4. Follow care instructions
-    """)
+    st.header("🔧 System Status")
+    st.metric("Model Status", "✅ Active" if model else "❌ Inactive")
+    st.metric("OpenAI Status", "✅ Ready" if openai_ready else "❌ Not Ready")
+    st.metric("Class Count", len(class_names))
     
-    st.header("Supported Plants")
-    st.markdown("""
-    - Tomatoes
-    - Potatoes
-    - Corn
-    - Peppers
-    - Apples
-    - Grapes
-    - And many more!
-    """)
+    st.header("🚨 Setup Required")
+    if not openai_ready:
+        st.error("""
+        **To enable AI advice:**
+        1. Go to Streamlit app settings
+        2. Click 'Secrets'
+        3. Add: `OPENAI_API_KEY = "your-key-here"`
+        4. Redeploy app
+        """)
 
 st.markdown("---")
 st.caption("AI-powered plant health analysis")

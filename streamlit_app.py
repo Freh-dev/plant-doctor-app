@@ -1,4 +1,4 @@
-# streamlit_app.py 
+# streamlit_app.py - WORKING DRAG & DROP VERSION
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -15,40 +15,25 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Enhanced CSS with working drag & drop styling
+# Simple CSS for better styling
 st.markdown("""
 <style>
-    /* Main theme colors */
-    :root {
-        --primary-green: #2E8B57;
-        --secondary-green: #3CB371;
-        --light-green: #F0FFF0;
-        --dark-green: #228B22;
-        --accent-color: #FF6B35;
-    }
-    
     .main-header {
         font-size: 3rem;
-        color: var(--primary-green);
+        color: #2E8B57;
         text-align: center;
         margin-bottom: 0.5rem;
         font-weight: 700;
     }
     
-    .sub-header {
-        font-size: 1.2rem;
-        color: #666;
+    .upload-area {
+        border: 3px dashed #3CB371;
+        border-radius: 15px;
+        padding: 3rem 1.5rem;
         text-align: center;
-        margin-bottom: 2rem;
-        font-weight: 300;
-    }
-    
-    .section-header {
-        font-size: 1.5rem;
-        color: var(--primary-green);
-        margin: 1.5rem 0 1rem 0;
-        border-bottom: 2px solid var(--light-green);
-        padding-bottom: 0.5rem;
+        background: #F0FFF0;
+        margin: 1.5rem 0;
+        transition: all 0.3s ease;
     }
     
     .status-card {
@@ -57,60 +42,7 @@ st.markdown("""
         padding: 1.2rem;
         margin: 0.8rem 0;
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        border-left: 4px solid var(--secondary-green);
-    }
-    
-    /* WORKING UPLOAD AREA STYLES */
-    .upload-container {
-        position: relative;
-        width: 100%;
-    }
-    
-    .upload-area {
-        border: 3px dashed var(--secondary-green);
-        border-radius: 15px;
-        padding: 3rem 1.5rem;
-        text-align: center;
-        background: var(--light-green);
-        margin: 1.5rem 0;
-        transition: all 0.3s ease;
-        cursor: pointer;
-    }
-    
-    .upload-area:hover {
-        background: #E8F5E8;
-        border-color: var(--primary-green);
-        transform: translateY(-2px);
-    }
-    
-    .upload-area.drag-over {
-        background: #E8F5E8;
-        border-color: var(--primary-green);
-        border-style: solid;
-    }
-    
-    .upload-icon {
-        font-size: 3rem;
-        margin-bottom: 1rem;
-        color: var(--primary-green);
-    }
-    
-    .upload-text {
-        color: #2E8B57;
-        margin-bottom: 0.5rem;
-        font-size: 1.2rem;
-        font-weight: 600;
-    }
-    
-    .upload-subtext {
-        color: #666;
-        margin-bottom: 0.5rem;
-    }
-    
-    .upload-formats {
-        color: #888;
-        font-size: 0.9rem;
-        margin: 0;
+        border-left: 4px solid #3CB371;
     }
     
     .diagnosis-card {
@@ -122,141 +54,17 @@ st.markdown("""
         border: 1px solid #e0f0e0;
     }
     
-    .tip-card {
-        background: white;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 0.6rem 0;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-        border-left: 3px solid var(--secondary-green);
-    }
-    
-    .metric-card {
-        background: linear-gradient(135deg, var(--primary-green), var(--dark-green));
-        color: white;
-        border-radius: 10px;
-        padding: 1.2rem;
-        text-align: center;
-        margin: 0.8rem 0;
-    }
-    
     .stButton button {
-        background: linear-gradient(135deg, var(--primary-green), var(--dark-green));
+        background: linear-gradient(135deg, #2E8B57, #228B22);
         color: white;
         border: none;
         border-radius: 8px;
         padding: 0.7rem 1.5rem;
         font-size: 1rem;
         font-weight: 600;
-        transition: all 0.3s ease;
         width: 100%;
-    }
-    
-    .stButton button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(46, 139, 87, 0.3);
-        background: linear-gradient(135deg, var(--dark-green), var(--primary-green));
-    }
-    
-    .success-badge {
-        background: var(--secondary-green);
-        color: white;
-        padding: 0.4rem 0.8rem;
-        border-radius: 15px;
-        font-weight: 600;
-        display: inline-block;
-        margin: 0.3rem 0;
-        font-size: 0.9rem;
-    }
-    
-    .warning-badge {
-        background: #FFA500;
-        color: white;
-        padding: 0.4rem 0.8rem;
-        border-radius: 15px;
-        font-weight: 600;
-        display: inline-block;
-        margin: 0.3rem 0;
-        font-size: 0.9rem;
-    }
-
-    /* Hide the default file uploader but keep it functional */
-    .upload-widget {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        opacity: 0;
-        cursor: pointer;
-    }
-    
-    /* Mobile responsiveness */
-    @media (max-width: 768px) {
-        .main-header {
-            font-size: 2rem;
-        }
-        
-        .upload-area {
-            padding: 2rem 1rem;
-        }
-        
-        .upload-icon {
-            font-size: 2rem;
-        }
     }
 </style>
-""", unsafe_allow_html=True)
-
-# JavaScript for drag & drop functionality
-st.markdown("""
-<script>
-// Drag and drop functionality
-function initializeDragDrop() {
-    const uploadArea = document.querySelector('.upload-area');
-    const fileInput = document.querySelector('.upload-widget input');
-    
-    if (uploadArea && fileInput) {
-        // Click to upload
-        uploadArea.addEventListener('click', function() {
-            fileInput.click();
-        });
-        
-        // Drag over effect
-        uploadArea.addEventListener('dragover', function(e) {
-            e.preventDefault();
-            uploadArea.classList.add('drag-over');
-        });
-        
-        // Drag leave effect
-        uploadArea.addEventListener('dragleave', function(e) {
-            e.preventDefault();
-            uploadArea.classList.remove('drag-over');
-        });
-        
-        // Drop functionality
-        uploadArea.addEventListener('drop', function(e) {
-            e.preventDefault();
-            uploadArea.classList.remove('drag-over');
-            
-            if (e.dataTransfer.files.length > 0) {
-                fileInput.files = e.dataTransfer.files;
-                
-                // Trigger change event
-                const event = new Event('change', { bubbles: true });
-                fileInput.dispatchEvent(event);
-            }
-        });
-    }
-}
-
-// Initialize when page loads
-document.addEventListener('DOMContentLoaded', initializeDragDrop);
-// Re-initialize when Streamlit updates the page
-if (typeof Streamlit !== 'undefined') {
-    Streamlit.onPageChange(initializeDragDrop);
-}
-</script>
 """, unsafe_allow_html=True)
 
 # Debug function
@@ -277,22 +85,40 @@ def check_openai_setup():
 @st.cache_resource
 def load_model():
     try:
+        # Try both model files
+        model_loaded = False
+        model = None
+        
         try:
             model = tf.keras.models.load_model("plantvillage_mobilenetv2_fixed.h5")
-        except:
-            model = tf.keras.models.load_model("ultra_light_model.keras")
+            st.sidebar.success("✅ Advanced Model Loaded")
+            model_loaded = True
+        except Exception as e1:
+            st.sidebar.warning(f"Advanced model failed: {str(e1)[:100]}...")
+        
+        if not model_loaded:
+            try:
+                model = tf.keras.models.load_model("ultra_light_model.keras")
+                st.sidebar.success("✅ Standard Model Loaded")
+                model_loaded = True
+            except Exception as e2:
+                st.sidebar.error(f"Standard model failed: {str(e2)[:100]}...")
+        
         return model
     except Exception as e:
-        st.error(f"❌ Model Error: {e}")
+        st.sidebar.error(f"❌ Model Error: {e}")
         return None
 
 @st.cache_data
 def load_class_names():
     try:
         with open("class_names_improved.json", "r") as f:
-            return json.load(f)
+            class_names = json.load(f)
+            st.sidebar.info(f"✅ Loaded {len(class_names)} plant classes")
+            return class_names
     except Exception as e:
-        return ["Tomato_healthy", "Tomato_early_blight", "Tomato_late_blight"]
+        st.sidebar.warning("Using default class names")
+        return ["Apple_healthy", "Apple_apple_scab", "Tomato_healthy", "Tomato_early_blight", "Tomato_late_blight"]
 
 def predict_image(image):
     try:
@@ -329,11 +155,6 @@ def display_fallback_advice(plant_name, disease):
     - Apply appropriate organic or chemical treatment
     - Monitor plant recovery daily
     - Adjust sunlight exposure as needed
-    
-    ### 📞 When to Seek Help
-    - Condition worsens after 3-5 days of treatment
-    - Multiple plants become affected
-    - Consult local garden center for severe cases
     """)
 
 # Load resources
@@ -342,42 +163,59 @@ class_names = load_class_names()
 openai_ready = check_openai_setup()
 img_size = (128, 128)
 
+# Debug information in sidebar
+with st.sidebar:
+    st.header("🔧 Debug Info")
+    st.write(f"Model loaded: {model is not None}")
+    st.write(f"Number of classes: {len(class_names)}")
+    st.write(f"OpenAI ready: {openai_ready}")
+    if class_names:
+        st.write("Sample classes:", class_names[:5])
+
 # Main App Header
 st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Upload a plant leaf photo for instant diagnosis and care advice</p>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #666; margin-bottom: 2rem;">Upload a plant leaf photo for instant diagnosis and care advice</p>', unsafe_allow_html=True)
 
 # Check if model is available
 if model is None:
-    st.error("Service temporarily unavailable. Please check the model files.")
+    st.error("""
+    ## 🔧 Service Temporarily Unavailable
+    
+    **Model loading failed.** Please check:
+    - Model files exist in the repository
+    - Files are not corrupted
+    - TensorFlow version compatibility
+    
+    Currently loaded classes: {}
+    """.format(len(class_names)))
     st.stop()
 
 # Main content layout
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    # Upload Section with WORKING drag & drop
-    st.markdown('<div class="section-header">📸 Upload Plant Image</div>', unsafe_allow_html=True)
-    st.markdown("**Choose a plant leaf image**")
+    # Upload Section - SIMPLE AND WORKING
+    st.subheader("📸 Upload Plant Image")
+    st.write("**Choose a plant leaf image**")
     
-    # Custom upload area with working drag & drop
-    st.markdown("""
-    <div class="upload-container">
-        <div class="upload-area">
-            <div class="upload-icon">🌿</div>
-            <div class="upload-text">Drag & Drop Your Plant Leaf Here</div>
-            <div class="upload-subtext">or click to browse files</div>
-            <div class="upload-formats">JPG, PNG, JPEG • Max 200MB</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # File uploader - positioned over the custom area but hidden
+    # Simple, working file uploader
     uploaded_file = st.file_uploader(
-        "Choose a plant leaf image",
+        "Drag and drop your file here or click to browse",
         type=["jpg", "jpeg", "png"],
-        label_visibility="collapsed",
-        key="main_uploader"
+        help="Supported formats: JPG, JPEG, PNG • Max 200MB",
+        label_visibility="collapsed"
     )
+    
+    # Show custom upload area when no file is selected
+    if uploaded_file is None:
+        st.markdown("""
+        <div class="upload-area">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🌿</div>
+            <h3 style="color: #2E8B57; margin-bottom: 0.5rem;">Drag & Drop Your Plant Leaf Here</h3>
+            <p style="color: #666; margin-bottom: 0.5rem;">or click the area above to browse files</p>
+            <p style="color: #888; font-size: 0.9rem; margin: 0;">JPG, PNG, JPEG • Max 200MB</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Show file info and preview when file is uploaded
     if uploaded_file is not None:
@@ -385,14 +223,15 @@ with col1:
             image = Image.open(uploaded_file)
             
             # Show success message
-            st.success(f"✅ **File uploaded successfully!** ({uploaded_file.name})")
+            st.success(f"✅ **File uploaded successfully!**")
+            st.write(f"**Filename:** {uploaded_file.name}")
             
             # Image preview
-            st.image(image, caption="📷 Your Plant Leaf", use_container_width=True)
+            st.image(image, caption="📷 Your Plant Leaf", width=400)
             
             # File info
             file_size = len(uploaded_file.getvalue()) / (1024 * 1024)  # Size in MB
-            st.caption(f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size:.1f} MB")
+            st.write(f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size:.1f} MB")
             
             # Analysis button
             if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
@@ -408,7 +247,7 @@ with col1:
                         """)
                     else:
                         # Display results
-                        st.markdown('<div class="section-header">📋 Diagnosis Results</div>', unsafe_allow_html=True)
+                        st.subheader("📋 Diagnosis Results")
                         
                         # Format disease name
                         formatted_disease = disease.replace('_', ' ').title()
@@ -416,11 +255,11 @@ with col1:
                         # Determine status
                         if "healthy" in disease.lower():
                             status_emoji = "✅"
-                            status_badge = '<span class="success-badge">Healthy Plant</span>'
+                            status_text = "Healthy Plant"
                             status_color = "#2E8B57"
                         else:
                             status_emoji = "⚠️"
-                            status_badge = '<span class="warning-badge">Needs Attention</span>'
+                            status_text = "Needs Attention"
                             status_color = "#FFA500"
                         
                         # Diagnosis card
@@ -428,7 +267,7 @@ with col1:
                         <div class="diagnosis-card">
                             <div style="text-align: center; margin-bottom: 1.2rem;">
                                 <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">{status_emoji}</div>
-                                {status_badge}
+                                <span style="background: {status_color}; color: white; padding: 0.4rem 0.8rem; border-radius: 15px; font-weight: 600;">{status_text}</span>
                             </div>
                             <h3 style="color: {status_color}; text-align: center; margin-bottom: 0.8rem;">{formatted_disease}</h3>
                             <div style="text-align: center;">
@@ -438,9 +277,27 @@ with col1:
                         </div>
                         """, unsafe_allow_html=True)
                         
+                        # Debug info
+                        with st.expander("🔍 Debug Information"):
+                            st.write(f"Predicted class: {disease}")
+                            st.write(f"Raw confidence: {confidence}")
+                            st.write(f"Model input size: {img_size}")
+                            st.write(f"Available classes: {len(class_names)}")
+                        
                         # Confidence feedback
-                        if confidence < 0.5:
-                            st.warning("**Note:** Confidence level is moderate. For best results, use clear, well-lit photos of the affected leaves.")
+                        if confidence < 0.3:
+                            st.warning("""
+                            **📝 Low Confidence Warning**
+                            The model is not very confident about this diagnosis. This could be because:
+                            - Image quality is poor
+                            - Plant type not well represented in training data
+                            - Unusual angle or lighting
+                            - Multiple diseases present
+                            """)
+                        elif confidence < 0.7:
+                            st.info("**ℹ️ Moderate Confidence** - Consider getting a second opinion if unsure.")
+                        else:
+                            st.success("**✅ High Confidence** - Diagnosis is reliable.")
                         
                         # Extract plant name for advice
                         if '_' in disease:
@@ -450,14 +307,14 @@ with col1:
                         
                         # Care instructions
                         st.markdown("---")
-                        st.markdown('<div class="section-header">💡 Care Instructions</div>', unsafe_allow_html=True)
+                        st.subheader("💡 Care Instructions")
                         
                         if openai_ready:
                             with st.spinner("🤖 Generating personalized care advice..."):
                                 advice = chatbot_helper.generate_advice(plant_name, disease)
                             
                             if "OpenAI" in advice or "API key" in advice:
-                                st.warning("⚠️ Using standard care advice")
+                                st.warning("⚠️ Using standard care advice (AI service unavailable)")
                                 display_fallback_advice(plant_name, disease)
                             else:
                                 st.success("✅ AI-Generated Personalized Advice")
@@ -471,68 +328,57 @@ with col1:
 
 with col2:
     # Sidebar content
-    with st.container():
-        st.markdown("""
-        <div style="text-align: center; margin-bottom: 1.5rem;">
-            <h2 style="color: #2E8B57; margin-bottom: 0.5rem;">System Status</h2>
-            <p style="color: #666; font-size: 0.9rem;">Real-time service monitoring</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Status cards
+    st.subheader("System Status")
+    st.write("Real-time service monitoring")
+    
+    # Status cards
+    st.markdown("""
+    <div class="status-card">
+        <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ Model Active</h4>
+        <p style="color: #666; margin: 0; font-size: 0.9rem;">Plant diagnosis ready</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if openai_ready:
         st.markdown("""
         <div class="status-card">
-            <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ Model Active</h4>
-            <p style="color: #666; margin: 0; font-size: 0.9rem;">Plant diagnosis ready</p>
+            <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ AI Advice Ready</h4>
+            <p style="color: #666; margin: 0; font-size: 0.9rem;">Personalized care tips</p>
         </div>
         """, unsafe_allow_html=True)
-        
-        if openai_ready:
-            st.markdown("""
-            <div class="status-card">
-                <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ AI Advice Ready</h4>
-                <p style="color: #666; margin: 0; font-size: 0.9rem;">Personalized care tips</p>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div class="status-card">
-                <h4 style="color: #FFA500; margin-bottom: 0.3rem;">⚠️ Basic Advice</h4>
-                <p style="color: #666; margin: 0; font-size: 0.9rem;">Standard care only</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Plant Types Metric
-        st.markdown(f"""
-        <div class="metric-card">
-            <h3 style="margin: 0; font-size: 1.8rem;">{len(class_names)}</h3>
-            <p style="margin: 0; opacity: 0.9; font-size: 0.9rem;">Plant Types Supported</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Tips Section
+    else:
         st.markdown("""
-        <div style="margin-top: 1.5rem;">
-            <h3 style="color: #2E8B57; border-bottom: 2px solid #F0FFF0; padding-bottom: 0.5rem; font-size: 1.2rem;">
-                💡 Tips for Best Results
-            </h3>
+        <div class="status-card">
+            <h4 style="color: #FFA500; margin-bottom: 0.3rem;">⚠️ Basic Advice</h4>
+            <p style="color: #666; margin: 0; font-size: 0.9rem;">Standard care only</p>
         </div>
         """, unsafe_allow_html=True)
-        
-        tips = [
-            "Use clear, well-lit photos",
-            "Focus on the affected leaves",
-            "Include a plain background",
-            "Take multiple angles if unsure",
-            "Regular monitoring is key"
-        ]
-        
-        for tip in tips:
-            st.markdown(f"""
-            <div class="tip-card">
-                <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
-            </div>
-            """, unsafe_allow_html=True)
+    
+    # Plant Types Metric
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #2E8B57, #228B22); color: white; border-radius: 10px; padding: 1.2rem; text-align: center; margin: 0.8rem 0;">
+        <h3 style="margin: 0; font-size: 1.8rem;">{len(class_names)}</h3>
+        <p style="margin: 0; opacity: 0.9; font-size: 0.9rem;">Plant Types Supported</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Tips Section
+    st.subheader("💡 Tips for Best Results")
+    
+    tips = [
+        "Use clear, well-lit photos",
+        "Focus on the affected leaves", 
+        "Include a plain background",
+        "Take multiple angles if unsure",
+        "Regular monitoring is key"
+    ]
+    
+    for tip in tips:
+        st.markdown(f"""
+        <div style="background: white; border-radius: 10px; padding: 1rem; margin: 0.6rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08); border-left: 3px solid #3CB371;">
+            <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")

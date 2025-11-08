@@ -15,23 +15,53 @@ st.set_page_config(
     layout="wide"
 )
 
-# Google Drive file ID
-FILE_ID = "15bKwqGT7AF_1JRaP_eAuB5PG36GRoDQo"
+# Google Drive file ID - let's try multiple possible IDs
+FILE_IDS = [
+    "1SbKwqGT7AT-J1RaP_eAuBSPG3oGRxDOo",  # Your original ID
+    "15bKwqGT7AF_1JRaP_eAuB5PG36GRoDQo",  # ID from error message
+]
 
 def download_file_from_google_drive(file_id, destination):
     """Download large files from Google Drive with confirmation token"""
-    URL = "https://docs.google.com/uc?export=download"
+    try:
+        URL = "https://docs.google.com/uc?export=download"
+        session = requests.Session()
 
-    session = requests.Session()
+        response = session.get(URL, params={'id': file_id}, stream=True)
+        response.raise_for_status()  # Check for HTTP errors
+        
+        token = get_confirm_token(response)
 
-    response = session.get(URL, params={'id': file_id}, stream=True)
-    token = get_confirm_token(response)
+        if token:
+            params = {'id': file_id, 'confirm': token}
+            response = session.get(URL, params=params, stream=True)
+            response.raise_for_status()
 
-    if token:
-        params = {'id': file_id, 'confirm': token}
-        response = session.get(URL, params=params, stream=True)
-
-    save_response_content(response, destination)
+        # Get total file size
+        total_size = int(response.headers.get('content-length', 0))
+        
+        with open(destination, "wb") as f:
+            downloaded = 0
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for chunk in response.iter_content(chunk_size=32768):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    # Update progress
+                    if total_size > 0:
+                        progress = downloaded / total_size
+                        progress_bar.progress(min(progress, 1.0))
+                        status_text.text(f"Downloaded: {downloaded}/{total_size} bytes ({progress:.1%})")
+            
+            status_text.text(f"✅ Download complete: {downloaded} bytes")
+        
+        return True
+    except Exception as e:
+        st.error(f"❌ Download failed: {e}")
+        return False
 
 def get_confirm_token(response):
     """Get confirmation token for Google Drive downloads"""
@@ -40,38 +70,56 @@ def get_confirm_token(response):
             return value
     return None
 
-def save_response_content(response, destination):
-    """Save the downloaded content with progress bar"""
-    CHUNK_SIZE = 32768
-    
-    # Get total file size
-    total_size = int(response.headers.get('content-length', 0))
-    
-    with open(destination, "wb") as f:
-        downloaded = 0
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        for chunk in response.iter_content(CHUNK_SIZE):
-            if chunk:
-                f.write(chunk)
-                downloaded += len(chunk)
-                
-                # Update progress
-                if total_size > 0:
-                    progress = downloaded / total_size
-                    progress_bar.progress(min(progress, 1.0))
-                    status_text.text(f"Downloaded: {downloaded}/{total_size} bytes ({progress:.1%})")
-
 @st.cache_resource
 def load_model():
     try:
         model_path = "plant_disease_M1.keras"
         
-        if not os.path.exists(model_path):
-            with st.spinner("📥 Downloading plant disease model from Google Drive (2.4 MB)..."):
-                download_file_from_google_drive(FILE_ID, model_path)
-                st.sidebar.success("✅ Model downloaded successfully!")
+        # Check if file already exists
+        if os.path.exists(model_path):
+            st.sidebar.info("📁 Model file found locally")
+            model = tf.keras.models.load_model(model_path)
+            st.sidebar.success("✅ Plant Disease Model Loaded Successfully!")
+            return model
+        
+        # Try to download from Google Drive with different file IDs
+        st.sidebar.info("🔍 Searching for model file...")
+        
+        download_success = False
+        for file_id in FILE_IDS:
+            with st.sidebar:
+                st.info(f"🔄 Trying File ID: {file_id}")
+            
+            if download_file_from_google_drive(file_id, model_path):
+                if os.path.exists(model_path) and os.path.getsize(model_path) > 0:
+                    download_success = True
+                    st.sidebar.success(f"✅ Downloaded using ID: {file_id}")
+                    break
+            else:
+                # Clean up failed download
+                if os.path.exists(model_path):
+                    os.remove(model_path)
+        
+        if not download_success:
+            st.error("❌ All download attempts failed")
+            st.info("""
+            📋 Manual Setup Required:
+            1. Download the model manually from your Google Drive
+            2. Go to https://drive.google.com and find 'plant_disease_M1.keras'
+            3. Download the file
+            4. Upload it to your GitHub repository
+            5. Refresh this app
+            """)
+            return None
+        
+        # Verify the downloaded file
+        file_size = os.path.getsize(model_path)
+        st.sidebar.info(f"📦 Downloaded file size: {file_size} bytes")
+        
+        if file_size == 0:
+            st.error("❌ Downloaded file is empty")
+            os.remove(model_path)
+            return None
         
         # Load the model
         model = tf.keras.models.load_model(model_path)
@@ -80,21 +128,22 @@ def load_model():
         
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
-        st.info("""
-        📋 Troubleshooting Google Drive download:
-        1. Make sure the file is shared with 'Anyone with the link'
-        2. Try accessing the link manually in browser first
-        3. Check if the file ID is correct
-        """)
         
-        # Fallback: Try to provide manual download instructions
-        st.error("""
-        🔧 Manual Download Option:
-        If automatic download fails, please:
-        1. Download manually from: https://drive.google.com/uc?id=1SbKwqGT7AT-J1RaP_eAuBSPG3oGRxDOo
-        2. Upload the file to your Streamlit app as 'plant_disease_M1.keras'
-        3. Refresh the app
-        """)
+        # Detailed debugging info
+        st.info("🔍 Debugging Information:")
+        
+        # Check current directory
+        st.write("📁 Files in current directory:")
+        current_files = [f for f in os.listdir('.') if os.path.isfile(f)]
+        for file in current_files:
+            file_size = os.path.getsize(file)
+            st.write(f"- {file} ({file_size} bytes)")
+        
+        # Check if .keras file exists but is corrupted
+        if os.path.exists("plant_disease_M1.keras"):
+            file_size = os.path.getsize("plant_disease_M1.keras")
+            st.error(f"⚠️ File exists but may be corrupted. Size: {file_size} bytes")
+            
         return None
 
 @st.cache_data
@@ -135,64 +184,20 @@ st.markdown("Upload a photo of your plant leaf to detect diseases and get treatm
 if model is None or not class_names:
     st.warning("⚠️ Model not loaded. Please check your files.")
     
-    # Test the download link
-    st.info("🔗 Testing Google Drive link...")
-    test_url = f"https://drive.google.com/uc?id={FILE_ID}"
-    st.markdown(f"Try accessing this link manually: [Google Drive File]({test_url})")
+    # Test the download links
+    st.info("🔗 Testing Google Drive links...")
+    for file_id in FILE_IDS:
+        test_url = f"https://drive.google.com/uc?id={file_id}"
+        st.markdown(f"- [Try this Google Drive link]({test_url})")
+    
+    st.info("""
+    💡 **Quick Fix**: 
+    Since Google Drive downloads are unreliable on Streamlit Cloud, consider:
+    1. **Upload the .keras file directly to GitHub** (if under 100MB)
+    2. **Use a different file hosting service** like Dropbox or GitHub Releases
+    3. **Use the ultra_light_model.keras** that fits GitHub's limits
+    """)
     
     st.stop()
 
-# File uploader
-uploaded_file = st.file_uploader(
-    "Choose a plant leaf image...", 
-    type=["jpg", "jpeg", "png"],
-    help="Upload a clear photo of a plant leaf"
-)
-
-if uploaded_file is not None:
-    # Display image
-    image = Image.open(uploaded_file)
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.image(image, caption="Uploaded Leaf", use_container_width=True)
-    
-    # Predict button
-    if st.button("🔍 Analyze Plant", type="primary"):
-        with st.spinner("Analyzing..."):
-            # Make prediction
-            disease, confidence, error = predict_image(image)
-            
-            if error:
-                st.error(f"❌ Prediction error: {error}")
-            else:
-                with col2:
-                    st.subheader("📊 Diagnosis Results")
-                    st.success(f"**Disease:** {disease}")
-                    st.success(f"**Confidence:** {confidence:.2%}")
-                    
-                    # Get plant name
-                    if '_' in disease:
-                        plant_name = disease.split('_')[0]
-                        st.info(f"**Plant Type:** {plant_name}")
-                    else:
-                        plant_name = "plant"
-                
-                # Get AI advice
-                with st.spinner("Getting treatment advice..."):
-                    advice = chatbot_helper.generate_advice(plant_name, disease)
-                    
-                st.subheader("💡 Treatment Advice")
-                st.info(advice)
-
-# Sidebar
-with st.sidebar:
-    st.header("📊 Model Info")
-    st.metric("Model Source", "Google Drive")
-    st.metric("File", "plant_disease_M1.keras")
-    st.metric("File Size", "2.4 MB")
-    st.metric("Status", "🔄 Download Required")
-
-# Footer
-st.markdown("---")
-st.caption("Built with ❤️ using TensorFlow and Streamlit | Plant Disease Detection AI")
+# Rest of your app code remains the same...

@@ -4,7 +4,7 @@ import tensorflow as tf
 import numpy as np
 from PIL import Image
 import json
-import gdown
+import requests
 import os
 import chatbot_helper
 
@@ -15,8 +15,53 @@ st.set_page_config(
     layout="wide"
 )
 
-# YOUR ACTUAL GOOGLE DRIVE FILE ID
-MODEL_URL = "https://drive.google.com/uc?id=1SbKwqGT7AT-J1RaP_eAuBSPG3oGRxDOo"
+# Google Drive file ID
+FILE_ID = "1SbKwqGT7AT-J1RaP_eAuBSPG3oGRxDOo"
+
+def download_file_from_google_drive(file_id, destination):
+    """Download large files from Google Drive with confirmation token"""
+    URL = "https://docs.google.com/uc?export=download"
+
+    session = requests.Session()
+
+    response = session.get(URL, params={'id': file_id}, stream=True)
+    token = get_confirm_token(response)
+
+    if token:
+        params = {'id': file_id, 'confirm': token}
+        response = session.get(URL, params=params, stream=True)
+
+    save_response_content(response, destination)
+
+def get_confirm_token(response):
+    """Get confirmation token for Google Drive downloads"""
+    for key, value in response.cookies.items():
+        if key.startswith('download_warning'):
+            return value
+    return None
+
+def save_response_content(response, destination):
+    """Save the downloaded content with progress bar"""
+    CHUNK_SIZE = 32768
+    
+    # Get total file size
+    total_size = int(response.headers.get('content-length', 0))
+    
+    with open(destination, "wb") as f:
+        downloaded = 0
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        for chunk in response.iter_content(CHUNK_SIZE):
+            if chunk:
+                f.write(chunk)
+                downloaded += len(chunk)
+                
+                # Update progress
+                if total_size > 0:
+                    progress = downloaded / total_size
+                    progress_bar.progress(min(progress, 1.0))
+                    status_text.text(f"Downloaded: {downloaded}/{total_size} bytes ({progress:.1%})")
 
 @st.cache_resource
 def load_model():
@@ -25,7 +70,7 @@ def load_model():
         
         if not os.path.exists(model_path):
             with st.spinner("📥 Downloading plant disease model from Google Drive (2.4 MB)..."):
-                gdown.download(MODEL_URL, model_path, quiet=False)
+                download_file_from_google_drive(FILE_ID, model_path)
                 st.sidebar.success("✅ Model downloaded successfully!")
         
         # Load the model
@@ -36,10 +81,19 @@ def load_model():
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
         st.info("""
-        📋 Troubleshooting:
-        1. Make sure the Google Drive file is shared publicly
-        2. Check your internet connection
-        3. Verify the file is accessible
+        📋 Troubleshooting Google Drive download:
+        1. Make sure the file is shared with 'Anyone with the link'
+        2. Try accessing the link manually in browser first
+        3. Check if the file ID is correct
+        """)
+        
+        # Fallback: Try to provide manual download instructions
+        st.error("""
+        🔧 Manual Download Option:
+        If automatic download fails, please:
+        1. Download manually from: https://drive.google.com/uc?id=1SbKwqGT7AT-J1RaP_eAuBSPG3oGRxDOo
+        2. Upload the file to your Streamlit app as 'plant_disease_M1.keras'
+        3. Refresh the app
         """)
         return None
 
@@ -80,6 +134,12 @@ st.markdown("Upload a photo of your plant leaf to detect diseases and get treatm
 # Check if model loaded successfully
 if model is None or not class_names:
     st.warning("⚠️ Model not loaded. Please check your files.")
+    
+    # Test the download link
+    st.info("🔗 Testing Google Drive link...")
+    test_url = f"https://drive.google.com/uc?id={FILE_ID}"
+    st.markdown(f"Try accessing this link manually: [Google Drive File]({test_url})")
+    
     st.stop()
 
 # File uploader
@@ -125,21 +185,13 @@ if uploaded_file is not None:
                 st.subheader("💡 Treatment Advice")
                 st.info(advice)
 
-# Sidebar with instructions
+# Sidebar
 with st.sidebar:
-    st.header("ℹ️ How to Use")
-    st.markdown("""
-    1. **Take a photo** of a plant leaf
-    2. **Upload** the image
-    3. **Click Analyze** for diagnosis
-    4. **Follow** the treatment advice
-    """)
-    
     st.header("📊 Model Info")
     st.metric("Model Source", "Google Drive")
     st.metric("File", "plant_disease_M1.keras")
     st.metric("File Size", "2.4 MB")
-    st.metric("Status", "✅ Ready to Download & Use")
+    st.metric("Status", "🔄 Download Required")
 
 # Footer
 st.markdown("---")

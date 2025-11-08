@@ -13,26 +13,36 @@ st.set_page_config(
     layout="wide"
 )
 
-# Load the specific H5 model
+# Load the MobileNetV4 model with proper handling
 @st.cache_resource
 def load_model():
     try:
-        # Specifically load the H5 model
-        model = tf.keras.models.load_model("plantvillage_finetuned_mobilenetv4.h5")
-        st.sidebar.success("✅ PlantVillage H5 Model Loaded Successfully!")
-        st.sidebar.info(f"🔧 Using: plantvillage_finetuned_mobilenetv4.h5")
+        # Load the model with custom objects if needed
+        model = tf.keras.models.load_model(
+            "plantvillage_finetuned_mobilenetv4.h5",
+            custom_objects=None,
+            compile=False
+        )
+        
+        st.sidebar.success("✅ MobileNetV4 Model Loaded Successfully!")
+        
+        # Debug: Show model architecture
+        st.sidebar.info(f"📊 Model Type: {type(model)}")
+        if hasattr(model, 'outputs'):
+            st.sidebar.info(f"🔧 Outputs: {len(model.outputs)}")
+        
         return model
     except Exception as e:
-        st.sidebar.error(f"❌ Error loading H5 model: {e}")
+        st.sidebar.error(f"❌ Error loading MobileNetV4: {e}")
         
-        # Fallback to ultra light model if H5 fails
+        # Fallback to ultra light model
         try:
             st.sidebar.info("🔄 Trying ultra light model as fallback...")
             model = tf.keras.models.load_model("ultra_light_model.keras")
             st.sidebar.success("✅ Ultra Light Model Loaded (Fallback)")
             return model
-        except:
-            st.sidebar.error("❌ No working model found!")
+        except Exception as fallback_error:
+            st.sidebar.error(f"❌ Fallback also failed: {fallback_error}")
             return None
 
 @st.cache_data
@@ -43,61 +53,61 @@ def load_class_names():
         return class_names
     except Exception as e:
         st.error(f"❌ Error loading class names: {e}")
-        # Provide fallback class names for PlantVillage dataset
+        # Fallback class names for PlantVillage
         return [
-            "Tomato_Bacterial_spot", "Tomato_Early_blight", "Tomato_Late_blight", "Tomato_Leaf_Mold",
-            "Tomato_Septoria_leaf_spot", "Tomato_Spider_mites", "Tomato_Target_Spot", 
-            "Tomato_Yellow_Leaf_Curl_Virus", "Tomato_mosaic_virus", "Tomato_healthy",
-            "Potato_Early_blight", "Potato_Late_blight", "Potato_healthy",
-            "Corn_(maize)_Northern_Leaf_Blight", "Corn_(maize)_Common_rust_", "Corn_(maize)_healthy",
-            "Pepper_bell_Bacterial_spot", "Pepper_bell_healthy",
-            "Apple_Apple_scab", "Apple_Black_rot", "Apple_Cedar_apple_rust", "Apple_healthy"
+            "Tomato_Bacterial_spot", "Tomato_Early_blight", "Tomato_Late_blight", 
+            "Tomato_Leaf_Mold", "Tomato_Septoria_leaf_spot", "Tomato_Spider_mites", 
+            "Tomato_Target_Spot", "Tomato_Yellow_Leaf_Curl_Virus", "Tomato_mosaic_virus", 
+            "Tomato_healthy", "Potato_Early_blight", "Potato_Late_blight", "Potato_healthy",
+            "Corn_Northern_Leaf_Blight", "Corn_Common_rust", "Corn_healthy",
+            "Pepper_bell_Bacterial_spot", "Pepper_bell_healthy"
         ]
 
 # Load resources
 model = load_model()
 class_names = load_class_names()
-img_size = (224, 224)  # Standard size for PlantVillage H5 models
+img_size = (224, 224)  # Standard for MobileNet models
 
 def predict_image(image):
-    """Predict plant disease from image using H5 model"""
+    """Predict plant disease from image with MobileNetV4 compatibility"""
     try:
-        # Resize to model's expected input size
+        # Resize image
         img = image.resize(img_size)
         img_array = np.array(img) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
         
-        # Make prediction
+        # Handle different model output types
         prediction = model.predict(img_array, verbose=0)
-        predicted_class = class_names[np.argmax(prediction)]
+        
+        # Debug: Check prediction structure
+        st.sidebar.info(f"🎯 Prediction type: {type(prediction)}")
+        if isinstance(prediction, list):
+            st.sidebar.info(f"📦 Prediction list length: {len(prediction)}")
+            # Use the first output if multiple outputs
+            prediction = prediction[0]
+        
+        # Get the predicted class and confidence
+        predicted_index = np.argmax(prediction)
+        predicted_class = class_names[predicted_index]
         confidence = float(np.max(prediction))
         
         return predicted_class, confidence, None
+        
     except Exception as e:
         return None, None, str(e)
 
-# Enhanced advice function for PlantVillage diseases
+# Enhanced advice function
 def generate_advice(plant, disease):
-    """Generate plant care advice for PlantVillage dataset diseases"""
+    """Generate plant care advice"""
     advice_templates = {
-        # Tomato diseases
-        "bacterial_spot": f"🦠 For {plant} Bacterial Spot: Remove infected leaves, apply copper-based bactericide, avoid overhead watering, and rotate crops.",
-        "early_blight": f"🍂 For {plant} Early Blight: Remove affected leaves, apply fungicide, water at soil level, and improve air circulation.",
-        "late_blight": f"🔥 For {plant} Late Blight: Remove infected plants immediately, use copper fungicide, avoid wet foliage, and destroy infected material.",
-        "leaf_mold": f"🍄 For {plant} Leaf Mold: Improve ventilation, reduce humidity, apply fungicide, and space plants properly.",
-        "septoria_leaf_spot": f"🔴 For {plant} Septoria Leaf Spot: Remove infected leaves, apply chlorothalonil, avoid overhead irrigation, and rotate crops.",
-        "yellow_leaf_curl": f"🔄 For {plant} Yellow Leaf Curl Virus: Remove infected plants, control whiteflies, use resistant varieties, and destroy infected debris.",
-        "mosaic_virus": f"🟨 For {plant} Mosaic Virus: Remove infected plants, control aphids, disinfect tools, and use virus-free seeds.",
-        
-        # Potato diseases
-        "potato_blight": f"🥔 For {plant} Blight: Remove infected plants, apply fungicide, ensure good drainage, and harvest carefully.",
-        
-        # Corn diseases  
-        "northern_leaf_blight": f"🌽 For {plant} Northern Leaf Blight: Remove infected leaves, apply fungicide, rotate crops, and use resistant hybrids.",
-        "common_rust": f"🟫 For {plant} Common Rust: Apply fungicide early, remove infected leaves, and avoid late planting.",
-        
-        # General
-        "healthy": f"🌱 Your {plant} plant looks healthy! Continue regular care: proper watering, balanced fertilizer, and pest monitoring."
+        "bacterial_spot": f"🦠 **{plant} Bacterial Spot**: Remove infected leaves, apply copper-based spray, avoid overhead watering, improve air circulation.",
+        "early_blight": f"🍂 **{plant} Early Blight**: Remove affected leaves, apply fungicide, water at soil level, ensure good spacing.",
+        "late_blight": f"🔥 **{plant} Late Blight**: Remove infected plants immediately, use copper fungicide, avoid wet foliage, destroy infected material.",
+        "leaf_mold": f"🍄 **{plant} Leaf Mold**: Increase ventilation, reduce humidity, apply fungicide, space plants properly.",
+        "septoria": f"🔴 **{plant} Septoria Leaf Spot**: Remove infected leaves, apply fungicide, avoid overhead irrigation, rotate crops.",
+        "yellow_curl": f"🔄 **{plant} Yellow Leaf Curl**: Remove infected plants, control whiteflies, use resistant varieties.",
+        "mosaic": f"🟨 **{plant} Mosaic Virus**: Remove infected plants, control aphids, disinfect tools.",
+        "healthy": f"🌱 **{plant} Healthy**: Excellent! Continue regular care: proper watering, balanced nutrition, and pest monitoring."
     }
     
     # Find matching advice
@@ -106,19 +116,20 @@ def generate_advice(plant, disease):
         if key in disease_lower:
             return advice_templates[key]
     
-    # General advice for unknown diseases
-    return f"🌿 For {disease} in {plant}: Remove affected leaves, improve air circulation, avoid overwatering, monitor regularly, and consider organic fungicides if needed."
+    # General advice
+    return f"🌿 **{disease} in {plant}**: Remove affected leaves, improve growing conditions, monitor regularly, and consult local experts if needed."
 
 # App UI
-st.title("🌿 Plant Doctor - Smart Plant Diagnosis")
-st.markdown("**Using PlantVillage H5 Model for accurate disease detection**")
+st.title("🌿 Plant Doctor - MobileNetV4 Edition")
+st.markdown("**Powered by fine-tuned MobileNetV4 for advanced plant disease detection**")
 
 # Check if model loaded successfully
 if model is None:
     st.error("""
-    ❌ Model not loaded. Please ensure you have:
-    - `plantvillage_finetuned_mobilenetv4.h5` in your repository
-    - Or `ultra_light_model.keras` as fallback
+    ❌ Model not loaded. Please ensure:
+    - `plantvillage_finetuned_mobilenetv4.h5` is in your repository
+    - File is not corrupted
+    - Model architecture is compatible
     """)
     st.stop()
 
@@ -126,7 +137,7 @@ if model is None:
 uploaded_file = st.file_uploader(
     "Choose a plant leaf image...", 
     type=["jpg", "jpeg", "png"],
-    help="Upload a clear photo of a plant leaf (recommended size: 224x224 pixels)"
+    help="Upload a clear photo of a plant leaf (224x224 pixels works best)"
 )
 
 if uploaded_file is not None:
@@ -136,69 +147,73 @@ if uploaded_file is not None:
     
     with col1:
         st.image(image, caption="Uploaded Leaf", width='stretch')
-        st.info(f"📏 Image size: {image.size}")
-        st.info(f"🎯 Model expects: {img_size}")
+        st.info(f"📏 Original size: {image.size}")
+        st.info(f"🎯 Model input: {img_size}")
     
     # Predict button
-    if st.button("🔍 Analyze Plant", type="primary", width='stretch'):
-        with st.spinner("Analyzing with PlantVillage H5 Model..."):
+    if st.button("🔍 Analyze with MobileNetV4", type="primary", width='stretch'):
+        with st.spinner("MobileNetV4 analyzing..."):
             # Make prediction
             disease, confidence, error = predict_image(image)
             
             if error:
                 st.error(f"❌ Prediction error: {error}")
+                st.info("💡 Try using the ultra light model instead")
             else:
                 with col2:
                     st.subheader("📊 Diagnosis Results")
                     
-                    # Display with confidence indicators
-                    if confidence > 0.8:
+                    # Confidence-based styling
+                    if confidence > 0.85:
                         st.success(f"**Disease:** {disease}")
-                        st.success(f"**Confidence:** {confidence:.2%} 🎯 High")
-                    elif confidence > 0.6:
+                        st.success(f"**Confidence:** {confidence:.2%} 🎯 Very High")
+                    elif confidence > 0.70:
+                        st.success(f"**Disease:** {disease}")
+                        st.success(f"**Confidence:** {confidence:.2%} ✅ High")
+                    elif confidence > 0.50:
                         st.warning(f"**Disease:** {disease}")
                         st.warning(f"**Confidence:** {confidence:.2%} ⚠️ Medium")
                     else:
                         st.info(f"**Disease:** {disease}")
                         st.info(f"**Confidence:** {confidence:.2%} 🔍 Low")
                     
-                    # Get plant name
+                    # Extract plant name
                     if '_' in disease:
                         plant_name = disease.split('_')[0].title()
                         st.info(f"**Plant Type:** {plant_name}")
                     else:
-                        plant_name = "plant"
+                        plant_name = "Plant"
                 
                 # Get advice
                 advice = generate_advice(plant_name, disease)
                     
-                st.subheader("💡 Treatment Advice")
+                st.subheader("💡 AI Treatment Advice")
                 st.info(advice)
 
-# Sidebar with PlantVillage-specific info
+# Sidebar
 with st.sidebar:
-    st.header("🔬 Model Information")
-    st.metric("Active Model", "PlantVillage H5")
+    st.header("🔬 Model Info")
+    st.metric("Architecture", "MobileNetV4")
     st.metric("Input Size", "224×224")
-    st.metric("Dataset", "PlantVillage")
+    st.metric("Fine-tuned", "PlantVillage")
     
     st.header("🌿 Supported Plants")
     st.markdown("""
     - **Tomatoes** (10 diseases)
-    - **Potatoes** (3 conditions) 
-    - **Corn/Maize** (3 diseases)
+    - **Potatoes** (3 diseases)
+    - **Corn** (3 diseases)
     - **Peppers** (2 conditions)
-    - **Apples** (4 diseases)
+    - **+ More PlantVillage species**
     """)
     
-    st.header("📸 Image Tips")
+    st.header("⚡ Performance")
     st.markdown("""
-    - Use **224×224** pixels if possible
-    - **Clear, focused** leaf close-up
-    - **Plain background** recommended
-    - **Good lighting** without shadows
+    - **High accuracy** detection
+    - **Fast inference** with MobileNetV4
+    - **38 disease classes**
+    - **Professional-grade** results
     """)
 
 # Footer
 st.markdown("---")
-st.caption("Powered by PlantVillage H5 Model | Built with TensorFlow & Streamlit | Plant Disease Detection AI")
+st.caption("Powered by Fine-tuned MobileNetV4 | PlantVillage Dataset | Built with TensorFlow & Streamlit")

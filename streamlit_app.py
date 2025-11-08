@@ -1,4 +1,19 @@
-# streamlit_app.py - UPDATED MODEL LOADING
+# streamlit_app.py - CORRECTED VERSION
+import streamlit as st
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+import json
+import os
+
+# Set page config FIRST
+st.set_page_config(
+    page_title="Plant Doctor 🌿",
+    page_icon="🌿",
+    layout="wide"
+)
+
+# THEN define cached functions
 @st.cache_resource
 def load_model():
     try:
@@ -52,3 +67,79 @@ def predict_image(image):
         return predicted_class, confidence, None
     except Exception as e:
         return None, None, str(e)
+
+def generate_advice(plant, disease):
+    """Generate plant care advice"""
+    advice_templates = {
+        "healthy": f"🌱 Your {plant} plant looks healthy! Continue regular care.",
+        "early_blight": f"🍂 {plant} Early Blight: Remove affected leaves, improve air circulation.",
+        "late_blight": f"🔥 {plant} Late Blight: Remove infected plants immediately.",
+        "bacterial_spot": f"🦠 {plant} Bacterial Spot: Apply copper spray, avoid wet leaves."
+    }
+    
+    disease_lower = disease.lower()
+    for key in advice_templates:
+        if key in disease_lower:
+            return advice_templates[key]
+    
+    return f"🌿 For {disease} in {plant}: Remove affected leaves and improve growing conditions."
+
+# App UI
+st.title("🌿 Plant Doctor")
+st.markdown("Upload a plant leaf photo for instant diagnosis")
+
+if model is None or not class_names:
+    st.error("Service temporarily unavailable. Please check the model files.")
+    st.stop()
+
+uploaded_file = st.file_uploader(
+    "Choose a plant leaf image", 
+    type=["jpg", "jpeg", "png"]
+)
+
+if uploaded_file is not None:
+    image = Image.open(uploaded_file)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.image(image, caption="Your plant leaf", use_container_width=True)
+    
+    if st.button("Analyze Plant", type="primary", use_container_width=True):
+        with st.spinner("Analyzing..."):
+            disease, confidence, error = predict_image(image)
+            
+            if error:
+                st.error("Analysis failed. Please try another image.")
+            else:
+                with col2:
+                    st.subheader("Diagnosis")
+                    st.success(f"**Condition:** {disease.replace('_', ' ').title()}")
+                    st.success(f"**Confidence:** {confidence:.0%}")
+                
+                advice = generate_advice("plant", disease)
+                st.subheader("Care Instructions")
+                st.info(advice)
+
+# Sidebar
+with st.sidebar:
+    st.header("How to Use")
+    st.markdown("""
+    1. Take a clear leaf photo
+    2. Upload the image  
+    3. Get instant diagnosis
+    4. Follow care instructions
+    """)
+    
+    st.header("Supported Plants")
+    st.markdown("""
+    - Tomatoes
+    - Potatoes
+    - Corn
+    - Peppers
+    - Apples
+    - Grapes
+    - And many more!
+    """)
+
+st.markdown("---")
+st.caption("AI-powered plant health analysis")

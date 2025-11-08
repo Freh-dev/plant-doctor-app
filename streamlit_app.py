@@ -18,7 +18,7 @@ st.set_page_config(
 def load_model():
     try:
         # Use the fixed MobileNetV2 model
-        model = tf.keras.models.load_model("plantvillage_mobilenetv2_fixed.h5")
+        model = tf.keras.models.load_model("plantvillage_improved.h5")
         st.sidebar.success("✅ Advanced AI Model Loaded!")
         return model
     except Exception as e:

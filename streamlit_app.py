@@ -96,13 +96,13 @@ def load_model():
         except Exception as e1:
             st.sidebar.warning(f"Advanced model failed: {str(e1)[:100]}...")
         
-        if not model_loaded:
-            try:
-                model = tf.keras.models.load_model("ultra_light_model.keras")
-                st.sidebar.success("✅ Standard Model Loaded")
-                model_loaded = True
-            except Exception as e2:
-                st.sidebar.error(f"Standard model failed: {str(e2)[:100]}...")
+      #  if not model_loaded:
+      #     try:
+      #         model = tf.keras.models.load_model("ultra_light_model.keras")
+      #        st.sidebar.success("✅ Standard Model Loaded")
+      #        model_loaded = True
+      #    except Exception as e2:
+      #        st.sidebar.error(f"Standard model failed: {str(e2)[:100]}...")
         
         return model
     except Exception as e:

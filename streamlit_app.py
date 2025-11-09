@@ -90,7 +90,9 @@ def load_model():
         model = None
         
         try:
-            model = tf.keras.models.load_model("plantvillage_head_cpu_v2_1.h5")
+            # model = tf.keras.models.load_model("plantvillage_head_cpu_v2_1.h5")
+            model = tf.keras.models.load_model("plantvillage_finetuned_mobilenetv4.h5")
+            #plantvillage_finetuned_mobilenetv4.h5
             st.sidebar.success("✅ Advanced Model Loaded")
             model_loaded = True
         except Exception as e1:

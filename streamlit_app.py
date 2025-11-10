@@ -1,4 +1,4 @@
-# streamlit_app.py - IMPROVED VERSION WITH CONFIDENCE CHECKING
+# streamlit_app.py - UPDATED VERSION WITH CONFIDENCE FIXES
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -14,6 +14,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize prediction history
+if 'prediction_history' not in st.session_state:
+    st.session_state.prediction_history = []
 
 # Simple CSS for better styling
 st.markdown("""
@@ -72,6 +76,14 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
+    
+    .error-box {
+        background: linear-gradient(135deg, #F8D7DA, #F5C6CB);
+        border: 2px solid #DC3545;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -111,7 +123,7 @@ def load_class_names():
         st.sidebar.warning("Using default class names")
         return ["Apple_healthy", "Apple_apple_scab", "Tomato_healthy", "Tomato_early_blight", "Tomato_late_blight"]
 
-# IMPROVED PREDICTION FUNCTION WITH CONFIDENCE CHECKING
+# UPDATED PREDICTION FUNCTION WITH FIXED CONFIDENCE THRESHOLDS
 def predict_image(image):
     try:
         img = image.resize(img_size)
@@ -122,16 +134,33 @@ def predict_image(image):
         predicted_class = class_names[np.argmax(prediction)]
         confidence = float(np.max(prediction))
         
-        # ADD CONFIDENCE CHECK
-        if confidence < 0.3:
+        # FIXED CONFIDENCE THRESHOLDS - MORE CONSERVATIVE
+        if confidence < 0.4:
             return None, confidence, "Low confidence - please try a clearer image"
-        elif confidence < 0.6:
+        elif confidence < 0.75:  # CHANGED FROM 0.6 to 0.75
             return predicted_class, confidence, "Moderate confidence - consider expert verification"
         else:
             return predicted_class, confidence, None
             
     except Exception as e:
         return None, None, str(e)
+
+def debug_model_predictions(image):
+    """Debug what the model is actually predicting"""
+    img = image.resize(img_size)
+    img_array = np.array(img) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+    
+    prediction = model.predict(img_array, verbose=0)[0]
+    
+    # Get top 5 predictions
+    top_5_indices = np.argsort(prediction)[-5:][::-1]
+    
+    st.write("🔍 **Debug - Top 5 Predictions:**")
+    for i, idx in enumerate(top_5_indices):
+        st.write(f"{i+1}. {class_names[idx]} - {prediction[idx]:.3f} ({prediction[idx]*100:.1f}%)")
+    
+    return prediction
 
 def get_plant_advice(plant_name, disease):
     """Get AI advice with fallback handling"""
@@ -254,6 +283,11 @@ with col1:
                         Please try uploading a different image.
                         """)
                     else:
+                        # Track prediction history for bias detection
+                        st.session_state.prediction_history.append(disease)
+                        if len(st.session_state.prediction_history) > 5:
+                            st.session_state.prediction_history.pop(0)
+                        
                         # Display results
                         st.subheader("📋 Diagnosis Results")
                         
@@ -285,8 +319,8 @@ with col1:
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # CONFIDENCE WARNINGS
-                        if confidence < 0.3:
+                        # UPDATED CONFIDENCE WARNINGS WITH FIXED THRESHOLDS
+                        if confidence < 0.4:
                             st.markdown("""
                             <div class="warning-box">
                                 <h4>⚠️ Low Confidence Warning</h4>
@@ -300,7 +334,7 @@ with col1:
                                 <p><strong>Recommendation:</strong> Try a clearer, well-lit image of the leaf.</p>
                             </div>
                             """, unsafe_allow_html=True)
-                        elif confidence < 0.6:
+                        elif confidence < 0.75:  # CHANGED FROM 0.7 to 0.75
                             st.markdown("""
                             <div class="warning-box">
                                 <h4>⚠️ Moderate Confidence</h4>
@@ -315,12 +349,42 @@ with col1:
                         else:
                             st.success("**✅ High Confidence** - Diagnosis is reliable.")
                         
+                        # Check for corn bias
+                        corn_count = sum(1 for p in st.session_state.prediction_history if 'corn' in p.lower())
+                        if corn_count >= 3:
+                            st.markdown("""
+                            <div class="error-box">
+                                <h4>🚨 Model Bias Detected</h4>
+                                <p>The model appears biased toward corn predictions. This may indicate:</p>
+                                <ul>
+                                    <li>Training data imbalance</li>
+                                    <li>Model limitations with other plant types</li>
+                                    <li>Need for model retraining</li>
+                                </ul>
+                                <p><strong>Note:</strong> Predictions for non-corn plants may be less reliable.</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
                         # Debug info
                         with st.expander("🔍 Debug Information"):
                             st.write(f"Predicted class: {disease}")
                             st.write(f"Raw confidence: {confidence}")
                             st.write(f"Model input size: {img_size}")
                             st.write(f"Available classes: {len(class_names)}")
+                            st.write(f"Recent predictions: {st.session_state.prediction_history}")
+                            
+                            # Show detailed predictions
+                            debug_model_predictions(image)
+                        
+                        # User feedback for wrong predictions
+                        st.markdown("---")
+                        st.subheader("🤔 Prediction Accuracy")
+                        feedback = st.radio(
+                            "Does this prediction seem correct?",
+                            ["Yes, looks accurate", "No, this seems wrong", "Unsure"]
+                        )
+                        if feedback == "No, this seems wrong":
+                            st.warning("Thank you for the feedback! We'll use this to improve the model.")
                         
                         # Extract plant name for advice
                         if '_' in disease:

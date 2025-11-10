@@ -114,7 +114,7 @@ def load_model():
 @st.cache_data
 def load_class_names():
     try:
-        with open("class_names_improved.json", "r") as f:
+        with open("class_names_final.json", "r") as f:
             class_names = json.load(f)
             st.sidebar.info(f"✅ Loaded {len(class_names)} plant classes")
             return class_names

@@ -123,7 +123,7 @@ def load_class_names():
         st.sidebar.warning("Using default class names")
         return ["Apple_healthy", "Apple_apple_scab", "Tomato_healthy", "Tomato_early_blight", "Tomato_late_blight"]
 
-# UPDATED PREDICTION FUNCTION WITH FIXED CONFIDENCE THRESHOLDS
+# SIMPLIFIED PREDICTION FUNCTION - NO CONFIDENCE CHECKS
 def predict_image(image):
     try:
         img = image.resize(img_size)
@@ -134,13 +134,8 @@ def predict_image(image):
         predicted_class = class_names[np.argmax(prediction)]
         confidence = float(np.max(prediction))
         
-        # FIXED CONFIDENCE THRESHOLDS - MORE CONSERVATIVE
-        if confidence < 0.4:
-            return None, confidence, "Low confidence - please try a clearer image"
-        elif confidence < 0.75:  # CHANGED FROM 0.6 to 0.75
-            return predicted_class, confidence, "Moderate confidence - consider expert verification"
-        else:
-            return predicted_class, confidence, None
+        # JUST RETURN THE PREDICTION - NO CONFIDENCE CHECKS HERE
+        return predicted_class, confidence, None
             
     except Exception as e:
         return None, None, str(e)

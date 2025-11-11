@@ -7,6 +7,7 @@ import json
 import os
 #import chatbot_helper
 import keras 
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # Set page config
 st.set_page_config(
@@ -131,6 +132,9 @@ def predict_image(image):
         img_array = np.array(img) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
 
+        # Preprocess for MobileNetV2
+        img_array = preprocess_input(img_array)
+        
         # Extract features first
         features = feature_extractor.predict(img_array, verbose=0)
         st.write("Feature shape",features.shape)

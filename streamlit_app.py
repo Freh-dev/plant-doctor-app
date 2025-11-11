@@ -134,6 +134,7 @@ def predict_image(image):
         # Extract features first
         features = feature_extractor.predict(img_array, verbose=0)
         st.write("Feature shape",features.shape)
+        
         prediction = model.predict(features, verbose=0)
         predicted_class = class_names[np.argmax(prediction)]
         confidence = float(np.max(prediction))

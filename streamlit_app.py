@@ -6,6 +6,7 @@ from PIL import Image
 import json
 import os
 #import chatbot_helper
+import keras 
 
 # Set page config
 st.set_page_config(

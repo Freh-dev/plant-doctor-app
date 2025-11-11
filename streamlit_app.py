@@ -143,7 +143,7 @@ def predict_image(image):
 # --- Base Feature Extractor ---
 base = tf.keras.applications.MobileNetV2(
     include_top=False,
-    input_shape=(img_size, img_size, 3),
+    input_shape=(128, 128, 3),
     weights="imagenet",
     alpha=0.5
 )

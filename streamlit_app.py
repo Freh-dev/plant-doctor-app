@@ -131,10 +131,7 @@ def predict_image(image):
         img = image.resize(img_size)
         img_array = np.array(img) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
-
-        # Preprocess for MobileNetV2
-        img_array = preprocess_input(img_array)
-        
+   
         # Extract features first
         features = feature_extractor.predict(img_array, verbose=0)
         if debug: 
@@ -169,7 +166,11 @@ def debug_model_predictions(image):
     img = image.resize(img_size)
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
-    
+
+    # Extract features first
+    features = feature_extractor.predict(img_array, verbose=0)
+    if debug: 
+       st.write("Feature shape",features.shape)
 
     # Predict 
     prediction = model.predict(features, verbose=0)[0]

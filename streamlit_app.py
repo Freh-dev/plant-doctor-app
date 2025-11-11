@@ -129,6 +129,9 @@ def predict_image(image):
         img = image.resize(img_size)
         img_array = np.array(img) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
+
+        # Extract features first
+        features = feature_extractor.predict(img_array, verbose=0)
         
         prediction = model.predict(img_array, verbose=0)
         predicted_class = class_names[np.argmax(prediction)]
@@ -160,8 +163,7 @@ def debug_model_predictions(image):
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
     
-    # Extract features first
-    features = feature_extractor.predict(img_array, verbose=0)
+
     # Predict 
     prediction = model.predict(features, verbose=0)[0]
     

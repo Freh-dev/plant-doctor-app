@@ -5,9 +5,7 @@ import numpy as np
 from PIL import Image
 import json
 import os
-#import chatbot_helper
-import keras 
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+import chatbot_helper
 
 # Set page config
 st.set_page_config(
@@ -131,13 +129,8 @@ def predict_image(image):
         img = image.resize(img_size)
         img_array = np.array(img) / 255.0
         img_array = np.expand_dims(img_array, axis=0)
-   
-        # Extract features first
-        features = feature_extractor.predict(img_array, verbose=0)
-        if debug: 
-            st.write("Feature shape",features.shape)
         
-        prediction = model.predict(features, verbose=0)
+        prediction = model.predict(img_array, verbose=0)
         predicted_class = class_names[np.argmax(prediction)]
         confidence = float(np.max(prediction))
         
@@ -146,34 +139,14 @@ def predict_image(image):
             
     except Exception as e:
         return None, None, str(e)
-# Feature extraction
-# --- Base Feature Extractor ---
-base = tf.keras.applications.MobileNetV2(
-    include_top=False,
-    input_shape=(128, 128, 3),
-    weights="imagenet"
-    
-)
-base.trainable = False
-feature_extractor = keras.Sequential([
-    base,
-    keras.layers.GlobalAveragePooling2D()
-], name="feature_extractor")
-## feature extraction end
 
 def debug_model_predictions(image):
     """Debug what the model is actually predicting"""
     img = image.resize(img_size)
     img_array = np.array(img) / 255.0
     img_array = np.expand_dims(img_array, axis=0)
-
-    # Extract features first
-    features = feature_extractor.predict(img_array, verbose=0)
-    if debug: 
-       st.write("Feature shape",features.shape)
-
-    # Predict 
-    prediction = model.predict(features, verbose=0)[0]
+    
+    prediction = model.predict(img_array, verbose=0)[0]
     
     # Get top 5 predictions
     top_5_indices = np.argsort(prediction)[-5:][::-1]

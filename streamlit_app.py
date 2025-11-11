@@ -147,8 +147,8 @@ def predict_image(image):
 base = tf.keras.applications.MobileNetV2(
     include_top=False,
     input_shape=(128, 128, 3),
-    weights="imagenet",
-    alpha=0.5
+    weights="imagenet"
+    
 )
 base.trainable = False
 feature_extractor = keras.Sequential([

@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 import json
 import os
-import chatbot_helper
+#import chatbot_helper
 
 # Set page config
 st.set_page_config(

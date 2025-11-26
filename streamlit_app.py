@@ -103,7 +103,8 @@ def check_openai_setup():
         return False
 
 MODEL_PATH = "plant_disease_final_model.keras"
-MODEL_LINK = "/content/drive/MyDrive/ML_AI_Project/model"  # put your real link
+#MODEL_LINK = "/content/drive/MyDrive/ML_AI_Project/model"  # put your real link
+MODEL_LINK ="https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
 
 @st.cache_resource
 def load_model():

@@ -210,8 +210,11 @@ class_names = load_class_names()
 openai_ready = check_openai_setup()
 
 # IMPORTANT: this should match the model's input shape when you created it in Colab
-# If your streamlit model was built with input_shape=(224, 224, 3), use (224, 224) here.
-img_size = (224, 224)
+# Automatically infer image size from the model if possible
+if model is not None and hasattr(model, "input_shape") and len(model.input_shape) == 4:
+    img_size = (model.input_shape[1], model.input_shape[2])
+else:
+    img_size = (128, 128) # fallback
 
 # ----------------------- SIDEBAR DEBUG --------------------- #
 with st.sidebar:

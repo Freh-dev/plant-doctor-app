@@ -102,10 +102,20 @@ def check_openai_setup():
     else:
         return False
 
+MODEL_PATH = "plant_disease_final_model.keras"
+MODEL_LINK = "/content/drive/MyDrive/ML_AI_Project/model"  # put your real link
+
 @st.cache_resource
 def load_model():
+    if not os.path.exists(MODEL_PATH):
+        st.sidebar.error("❌ Model file not found.")
+        st.sidebar.write("Please download the model from:")
+        st.sidebar.write(MODEL_LINK)
+        st.sidebar.write("and place it in the same folder as `streamlit_app.py`.")
+        return None
+
     try:
-        model = tf.keras.models.load_model("plant_disease_final_model.keras")
+        model = tf.keras.models.load_model(MODEL_PATH)
         st.sidebar.success("✅ Advanced Model Loaded")
         return model
     except Exception as e:

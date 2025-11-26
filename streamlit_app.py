@@ -97,14 +97,15 @@ def check_openai_setup():
                 return True
             else:
                 return False
-        except:
+        except Exception:
             return False
     else:
         return False
 
+# Model + link info
 MODEL_PATH = "plant_disease_final_model.keras"
-#MODEL_LINK = "/content/drive/MyDrive/ML_AI_Project/model"  # put your real link
-MODEL_LINK ="https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
+# Folder link where the model is stored (user should download from here)
+MODEL_LINK = "https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
 
 @st.cache_resource
 def load_model():
@@ -130,9 +131,15 @@ def load_class_names():
             class_names = json.load(f)
             st.sidebar.info(f"✅ Loaded {len(class_names)} plant classes")
             return class_names
-    except Exception as e:
+    except Exception:
         st.sidebar.warning("Using default class names")
-        return ["Apple_healthy", "Apple_apple_scab", "Tomato_healthy", "Tomato_early_blight", "Tomato_late_blight"]
+        return [
+            "Apple_healthy",
+            "Apple_apple_scab",
+            "Tomato_healthy",
+            "Tomato_early_blight",
+            "Tomato_late_blight",
+        ]
 
 # SIMPLIFIED PREDICTION FUNCTION - NO CONFIDENCE CHECKS
 def predict_image(image):
@@ -176,7 +183,7 @@ def get_plant_advice(plant_name, disease):
         if "rate_limit" in str(e).lower() or "429" in str(e):
             return "AI service rate limit reached. Using expert care guide."
         else:
-            return f"AI service temporarily unavailable. Using expert care guide."
+            return "AI service temporarily unavailable. Using expert care guide."
 
 def display_fallback_advice(plant_name, disease):
     """Display fallback care advice"""
@@ -205,7 +212,8 @@ def display_fallback_advice(plant_name, disease):
 model = load_model()
 class_names = load_class_names()
 openai_ready = check_openai_setup()
-img_size = (128, 128)
+# IMPORTANT: match training resolution (EfficientNetB2)
+img_size = (224, 224)
 
 # Debug information in sidebar
 with st.sidebar:
@@ -218,11 +226,17 @@ with st.sidebar:
 
 # Main App Header
 st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; color: #666; margin-bottom: 2rem;">Upload a plant leaf photo for instant diagnosis and care advice</p>', unsafe_allow_html=True)
+st.markdown(
+    '<p style="text-align: center; color: #666; margin-bottom: 2rem;">'
+    'Upload a plant leaf photo for instant diagnosis and care advice'
+    '</p>',
+    unsafe_allow_html=True
+)
 
 # Check if model is available
 if model is None:
-    st.error("""
+    st.error(
+        """
     ## 🔧 Service Temporarily Unavailable
     
     **Model loading failed.** Please check:
@@ -231,7 +245,8 @@ if model is None:
     - TensorFlow version compatibility
     
     Currently loaded classes: {}
-    """.format(len(class_names)))
+    """.format(len(class_names))
+    )
     st.stop()
 
 # Main content layout
@@ -266,7 +281,7 @@ with col1:
             image = Image.open(uploaded_file)
             
             # Show success message
-            st.success(f"✅ **File uploaded successfully!**")
+            st.success("✅ **File uploaded successfully!**")
             st.write(f"**Filename:** {uploaded_file.name}")
             
             # Image preview
@@ -274,7 +289,9 @@ with col1:
             
             # File info
             file_size = len(uploaded_file.getvalue()) / (1024 * 1024)
-            st.write(f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size:.1f} MB")
+            st.write(
+                f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size:.1f} MB"
+            )
             
             # Analysis button
             if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
@@ -283,11 +300,13 @@ with col1:
                     disease, confidence, error = predict_image(image)
                     
                     if error:
-                        st.error(f"""
+                        st.error(
+                            f"""
                         ## ❌ Analysis Failed
                         **Error:** {error}
                         Please try uploading a different image.
-                        """)
+                        """
+                        )
                     else:
                         # Track prediction history for bias detection
                         st.session_state.prediction_history.append(disease)
@@ -311,7 +330,8 @@ with col1:
                             status_color = "#FFA500"
                         
                         # Diagnosis card
-                        st.markdown(f"""
+                        st.markdown(
+                            f"""
                         <div class="diagnosis-card">
                             <div style="text-align: center; margin-bottom: 1.2rem;">
                                 <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">{status_emoji}</div>
@@ -323,7 +343,9 @@ with col1:
                                 <h2 style="color: {status_color}; font-size: 2rem; margin: 0.3rem 0;">{confidence:.1%}</h2>
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
+                        """,
+                            unsafe_allow_html=True
+                        )
                         
                         # UPDATED CONFIDENCE WARNINGS WITH FIXED THRESHOLDS
                         if confidence < 0.4:
@@ -340,7 +362,7 @@ with col1:
                                 <p><strong>Recommendation:</strong> Try a clearer, well-lit image of the leaf.</p>
                             </div>
                             """, unsafe_allow_html=True)
-                        elif confidence < 0.75:  # CHANGED FROM 0.7 to 0.75
+                        elif confidence < 0.75:
                             st.markdown("""
                             <div class="warning-box">
                                 <h4>⚠️ Moderate Confidence</h4>
@@ -356,7 +378,9 @@ with col1:
                             st.success("**✅ High Confidence** - Diagnosis is reliable.")
                         
                         # Check for corn bias
-                        corn_count = sum(1 for p in st.session_state.prediction_history if 'corn' in p.lower())
+                        corn_count = sum(
+                            1 for p in st.session_state.prediction_history if "corn" in p.lower()
+                        )
                         if corn_count >= 3:
                             st.markdown("""
                             <div class="error-box">
@@ -393,8 +417,8 @@ with col1:
                             st.warning("Thank you for the feedback! We'll use this to improve the model.")
                         
                         # Extract plant name for advice
-                        if '_' in disease:
-                            plant_name = disease.split('_')[0]
+                        if "_" in disease:
+                            plant_name = disease.split("_")[0]
                         else:
                             plant_name = "plant"
                         
@@ -406,7 +430,11 @@ with col1:
                             with st.spinner("🤖 Generating personalized care advice..."):
                                 advice = get_plant_advice(plant_name, disease)
                             
-                            if "OpenAI" in advice or "API key" in advice or "rate limit" in advice.lower():
+                            if (
+                                "OpenAI" in advice
+                                or "API key" in advice
+                                or "rate limit" in advice.lower()
+                            ):
                                 st.warning("⚠️ Using standard care advice (AI service unavailable)")
                                 display_fallback_advice(plant_name, disease)
                             else:

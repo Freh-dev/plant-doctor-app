@@ -1,12 +1,24 @@
-# plant-doctor-app
-### Model Files (Too Big for GitHub)
+# 🌿 Plant Doctor App
 
-The trained model and class names are stored on Google Drive:
+This is an AI-powered web application that detects plant diseases from leaf images using a deep learning model.
 
-- Trained model (.keras): [Google Drive link here]
-- Class names (.json): [Google Drive link here]
+---
 
-To run the app locally:
-1. Download both files.
-2. Place them in the same folder as `streamlit_app.py`.
-3. Run: `streamlit run streamlit_app.py`
+## Project Files
+
+This repository contains:
+
+- `streamlit_app.py` → Main Streamlit web app  
+- `plant_disease_final_model.keras` → Trained deep learning model  
+- `class_names_final.json` → Class labels (38 plant disease categories)  
+- `chatbot_helper.py` → Generates AI care advice  
+- `requirements.txt` → Required Python packages  
+- `AI_Plant_Doctor_Final.ipynb` → Model training & evaluation notebook  
+
+---
+
+## How to Run the App
+
+### 1. Install dependencies
+```bash
+pip install -r requirements.txt

@@ -106,7 +106,7 @@ def check_openai_setup():
 MODEL_PATH = "plant_disease_final_model.keras"
 
 # Public Drive link so others can download the model manually if needed
-MODEL_LINK = "https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
+#MODEL_LINK = "https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
 
 @st.cache_resource
 def load_model():

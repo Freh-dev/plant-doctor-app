@@ -1,275 +1,3 @@
-# streamlit_app.py - FIXED VERSION WITH PROPER IMAGE HANDLING
-import streamlit as st
-import tensorflow as tf
-import numpy as np
-from PIL import Image
-import json
-import os
-import chatbot_helper
-from io import BytesIO
-
-# 🆕 EfficientNet preprocessing (must match training)
-from tensorflow.keras.applications.efficientnet import preprocess_input
-
-# ----------------------- PAGE CONFIG ----------------------- #
-st.set_page_config(
-    page_title="Plant Doctor 🌿",
-    page_icon="🌿",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# ----------------------- SESSION STATE --------------------- #
-if "prediction_history" not in st.session_state:
-    st.session_state.prediction_history = []
-
-if "uploaded_file_data" not in st.session_state:
-    st.session_state.uploaded_file_data = None
-
-# ----------------------- STYLING --------------------------- #
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 3rem;
-        color: #2E8B57;
-        text-align: center;
-        margin-bottom: 0.5rem;
-        font-weight: 700;
-    }
-    
-    .upload-area {
-        border: 3px dashed #3CB371;
-        border-radius: 15px;
-        padding: 3rem 1.5rem;
-        text-align: center;
-        background: #F0FFF0;
-        margin: 1.5rem 0;
-        transition: all 0.3s ease;
-    }
-    
-    .status-card {
-        background: white;
-        border-radius: 12px;
-        padding: 1.2rem;
-        margin: 0.8rem 0;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        border-left: 4px solid #3CB371;
-    }
-    
-    .diagnosis-card {
-        background: linear-gradient(135deg, #ffffff, #f8fff8);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin: 1.2rem 0;
-        box-shadow: 0 4px 12px rgba(46, 139, 87, 0.15);
-        border: 1px solid #e0f0e0;
-    }
-    
-    .stButton button {
-        background: linear-gradient(135deg, #2E8B57, #228B22);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.7rem 1.5rem;
-        font-size: 1rem;
-        font-weight: 600;
-        width: 100%;
-    }
-    
-    .warning-box {
-        background: linear-gradient(135deg, #FFF3CD, #FFEAA7);
-        border: 2px solid #FFA500;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    
-    .error-box {
-        background: linear-gradient(135deg, #F8D7DA, #F5C6CB);
-        border: 2px solid #DC3545;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ----------------------- HELPERS --------------------------- #
-def check_openai_setup():
-    """Check if OpenAI advice helper is configured."""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return False
-    try:
-        test_advice = chatbot_helper.generate_advice("tomato", "healthy")
-        # If we get a normal sentence back, assume OK
-        if "OpenAI" not in test_advice and "API key" not in test_advice:
-            return True
-        return False
-    except Exception:
-        return False
-
-# Updated paths - looking in current directory
-MODEL_PATH = "plant_disease_final_model.keras"
-CLASS_NAMES_PATH = "class_names_final.json"
-
-@st.cache_resource
-def load_model():
-    """Load the trained Keras model from local file."""
-    if not os.path.exists(MODEL_PATH):
-        st.sidebar.error("❌ Model file not found in current directory.")
-        st.sidebar.write(f"Looking for: {os.path.abspath(MODEL_PATH)}")
-        st.sidebar.write("Please make sure the model file is in the same directory as this script.")
-        return None
-
-    try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        st.sidebar.success("✅ Advanced model loaded (EfficientNet-based)")
-        return model
-    except Exception as e:
-        st.sidebar.error(f"❌ Error loading model: {e}")
-        return None
-
-@st.cache_data
-def load_class_names():
-    """Load class names from json file."""
-    try:
-        with open(CLASS_NAMES_PATH, "r") as f:
-            class_names = json.load(f)
-        st.sidebar.info(f"✅ Loaded {len(class_names)} plant classes")
-        return class_names
-    except Exception:
-        st.sidebar.warning(f"Could not load {CLASS_NAMES_PATH}, using default placeholder labels.")
-        return [
-            "Apple_healthy",
-            "Apple_apple_scab",
-            "Tomato_healthy", 
-            "Tomato_early_blight",
-            "Tomato_late_blight"
-        ]
-
-# 🆕 Central preprocessing function, matching EfficientNet training
-def preprocess_image_for_model(image, img_size):
-    """
-    Convert PIL image → RGB → resize → EfficientNet preprocess → add batch dimension.
-    """
-    image = image.convert("RGB")
-    img = image.resize(img_size)
-    img_array = np.array(img).astype("float32")
-    # IMPORTANT: use EfficientNet preprocess_input (no /255 here)
-    img_array = preprocess_input(img_array)
-    img_array = np.expand_dims(img_array, axis=0)
-    return img_array
-
-def predict_image(image, model, class_names, img_size):
-    """Run model prediction on a PIL.Image and return (class, confidence, error_msg)."""
-    try:
-        img_batch = preprocess_image_for_model(image, img_size)
-        prediction = model.predict(img_batch, verbose=0)[0]
-        predicted_index = int(np.argmax(prediction))
-        predicted_class = class_names[predicted_index]
-        confidence = float(np.max(prediction))
-        return predicted_class, confidence, None
-    except Exception as e:
-        return None, None, str(e)
-
-def debug_model_predictions(image, model, class_names, img_size):
-    """Show top-5 predictions for debugging."""
-    img_batch = preprocess_image_for_model(image, img_size)
-    prediction = model.predict(img_batch, verbose=0)[0]
-    top_5_indices = np.argsort(prediction)[-5:][::-1]
-
-    st.write("🔍 **Debug - Top 5 Predictions:**")
-    for rank, idx in enumerate(top_5_indices, start=1):
-        st.write(f"{rank}. {class_names[idx]} - {prediction[idx]:.3f} ({prediction[idx]*100:.1f}%)")
-
-def get_plant_advice(plant_name, disease):
-    """Try to get advice from chatbot_helper, fall back if error."""
-    try:
-        return chatbot_helper.generate_advice(plant_name, disease)
-    except Exception as e:
-        if "rate_limit" in str(e).lower() or "429" in str(e):
-            return "AI service rate limit reached. Using standard care advice instead."
-        return "AI advice currently unavailable. Using standard care advice instead."
-
-def display_fallback_advice(plant_name, disease):
-    """Static care guide if AI advice is unavailable."""
-    formatted_disease = disease.replace("_", " ").title()
-    st.info(f"""
-    **🌱 Recommended Treatment for {formatted_disease}**
-    
-    ### 🚨 Immediate Actions
-    - Remove affected leaves immediately to prevent spread
-    - Isolate plant if possible to protect others
-    - Clean tools thoroughly after handling infected plants
-    
-    ### 💧 Watering & Environment
-    - Water at the base only, avoid wetting leaves
-    - Improve air circulation around the plant
-    - Ensure proper drainage to prevent root issues
-    
-    ### 🛡️ Treatment Plan
-    - Apply appropriate organic or chemical treatment
-    - Monitor plant recovery daily
-    - Adjust sunlight exposure as needed
-    """)
-
-# ----------------------- LOAD RESOURCES -------------------- #
-model = load_model()
-class_names = load_class_names()
-openai_ready = check_openai_setup()
-
-# Automatically infer image size from the model if possible
-if model is not None and hasattr(model, "input_shape") and len(model.input_shape) == 4:
-    img_size = (model.input_shape[1], model.input_shape[2])  # should be (224, 224)
-else:
-    img_size = (224, 224)  # EfficientNetB2 fallback
-
-# ----------------------- SIDEBAR DEBUG --------------------- #
-with st.sidebar:
-    st.header("🔧 Debug Info")
-    st.write(f"Model loaded: {model is not None}")
-    st.write(f"Number of classes: {len(class_names)}")
-    st.write(f"OpenAI ready: {openai_ready}")
-    if class_names:
-        st.write("Sample classes:", class_names[:5])
-    st.write("Model file path:", os.path.abspath(MODEL_PATH))
-    st.write("Class names path:", os.path.abspath(CLASS_NAMES_PATH))
-    
-    # Show current directory contents for debugging
-    st.write("Current directory files:")
-    current_files = [f for f in os.listdir('.') if os.path.isfile(f)]
-    st.write(current_files[:10])  # Show first 10 files
-
-# ----------------------- MAIN HEADER ----------------------- #
-st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
-st.markdown(
-    '<p style="text-align: center; color: #666; margin-bottom: 2rem;">'
-    'Upload a plant leaf photo for instant AI-powered diagnosis and care advice.'
-    '</p>',
-    unsafe_allow_html=True
-)
-
-# If model is missing, show error and stop
-if model is None:
-    st.error(f"""
-    ## 🔧 Service Temporarily Unavailable
-    
-    The model file **{MODEL_PATH}** is not available in the current directory.
-    
-    Please make sure:
-    - The file exists in the same directory as `streamlit_app.py`
-    - The filename is exactly: `{MODEL_PATH}`
-    - The file matches the `{CLASS_NAMES_PATH}` label order
-    
-    **Current directory:** {os.getcwd()}
-    **Looking for:** {os.path.abspath(MODEL_PATH)}
-    """)
-    st.stop()
-
-# ----------------------- LAYOUT ---------------------------- #
-col1, col2 = st.columns([2, 1])
-
 with col1:
     st.subheader("📸 Upload Plant Image")
     st.write("**Choose a plant leaf image**")
@@ -318,6 +46,10 @@ with col1:
 
             # Analyze button
             if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
+                # 🆕 TEMPORARILY CLEAR HISTORY FOR ACCURATE TESTING
+                current_prediction_history = st.session_state.prediction_history.copy()
+                st.session_state.prediction_history = []  # Clear history for testing
+                
                 with st.spinner("🔬 Analyzing your plant..."):
                     # 🆕 CRITICAL FIX: Create a FRESH image object for prediction
                     prediction_image_data = BytesIO(st.session_state.uploaded_file_data)
@@ -327,6 +59,13 @@ with col1:
                         prediction_image, model, class_names, img_size
                     )
 
+                # 🆕 RESTORE HISTORY AFTER PREDICTION
+                st.session_state.prediction_history = current_prediction_history
+                if disease:
+                    st.session_state.prediction_history.append(disease)
+                    if len(st.session_state.prediction_history) > 5:
+                        st.session_state.prediction_history.pop(0)
+
                 if error:
                     st.error(f"""
                     ## ❌ Analysis Failed
@@ -335,11 +74,6 @@ with col1:
                     Please try a different image or check the model configuration.
                     """)
                 else:
-                    # Track for bias detection
-                    st.session_state.prediction_history.append(disease)
-                    if len(st.session_state.prediction_history) > 5:
-                        st.session_state.prediction_history.pop(0)
-
                     # ----------------- DIAGNOSIS CARD ----------------- #
                     st.subheader("📋 Diagnosis Results")
 
@@ -409,24 +143,9 @@ with col1:
                     else:
                         st.success("**✅ High Confidence** – Diagnosis is likely reliable.")
 
-                    # ----------------- CORN BIAS CHECK ----------------- #
-                    corn_count = sum(
-                        1 for p in st.session_state.prediction_history
-                        if "corn" in p.lower()
-                    )
-                    if corn_count >= 3:
-                        st.markdown("""
-                        <div class="error-box">
-                            <h4>🚨 Potential Model Bias Detected</h4>
-                            <p>The model has predicted <strong>corn-related</strong> classes several times in a row.</p>
-                            <p>This may indicate:</p>
-                            <ul>
-                                <li>Training data imbalance</li>
-                                <li>Limited performance on non-corn plants</li>
-                                <li>Need for future retraining or fine-tuning</li>
-                            </ul>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    # 🆕 SIMPLIFIED HISTORY DISPLAY (REMOVED BIAS CHECK)
+                    if len(st.session_state.prediction_history) >= 2:
+                        st.info(f"📊 You've analyzed {len(st.session_state.prediction_history)} images in this session")
 
                     # ----------------- DEBUG EXPANDER ------------------ #
                     with st.expander("🔍 Debug Information"):
@@ -476,76 +195,3 @@ with col1:
 
         except Exception as e:
             st.error(f"❌ Error processing image: {e}")
-
-with col2:
-    # Sidebar / status info
-    st.subheader("System Status")
-    st.write("Real-time service monitoring")
-
-    st.markdown("""
-    <div class="status-card">
-        <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ Model Active</h4>
-        <p style="color: #666; margin: 0; font-size: 0.9rem;">Plant diagnosis ready</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if openai_ready:
-        st.markdown("""
-        <div class="status-card">
-            <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ AI Advice Ready</h4>
-            <p style="color: #666; margin: 0; font-size: 0.9rem;">Personalized care tips enabled</p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <div class="status-card">
-            <h4 style="color: #FFA500; margin-bottom: 0.3rem;">⚠️ Basic Advice Mode</h4>
-            <p style="color: #666; margin: 0; font-size: 0.9rem;">Standard care tips only</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Plant types metric
-    st.markdown(f"""
-    <div style="background: linear-gradient(135deg, #2E8B57, #228B22);
-                color: white; border-radius: 10px; padding: 1.2rem;
-                text-align: center; margin: 0.8rem 0;">
-        <h3 style="margin: 0; font-size: 1.8rem;">{len(class_names)}</h3>
-        <p style="margin: 0; opacity: 0.9; font-size: 0.9rem;">Plant Types Supported</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Tips
-    st.subheader("💡 Tips for Best Results")
-    tips = [
-        "Use clear, well-lit photos",
-        "Focus on the affected leaves",
-        "Include a plain, non-distracting background",
-        "Take multiple angles if you're unsure",
-        "Monitor your plant regularly for changes"
-    ]
-    for tip in tips:
-        st.markdown(f"""
-        <div style="background: white; border-radius: 10px; padding: 1rem;
-                    margin: 0.6rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-                    border-left: 3px solid #3CB371;">
-            <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-# Clear uploaded file button in sidebar
-with st.sidebar:
-    if st.button("Clear Uploaded Image"):
-        st.session_state.uploaded_file_data = None
-        st.session_state.uploaded_file_name = None
-        st.success("Uploaded image cleared!")
-        st.rerun()
-
-# ----------------------- FOOTER ---------------------------- #
-st.markdown("---")
-st.markdown("""
-<div style="text-align: center; color: #666; padding: 1.5rem 0;">
-    <p style="margin: 0; font-size: 0.9rem;">
-        <strong>AI-powered plant health analysis</strong> • Keep your plants thriving 🌱
-    </p>
-</div>
-""", unsafe_allow_html=True)

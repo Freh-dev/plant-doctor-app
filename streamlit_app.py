@@ -1,4 +1,4 @@
-# streamlit_app.py - IMPROVED VERSION WITH ENHANCED VALIDATION AND ERROR HANDLING
+# streamlit_app.py - FIXED VERSION WITH PROPER FILE HANDLING
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -118,6 +118,9 @@ if "prediction_history" not in st.session_state:
 if "feedback_submitted" not in st.session_state:
     st.session_state.feedback_submitted = False
 
+if "uploaded_file_data" not in st.session_state:
+    st.session_state.uploaded_file_data = None
+
 # ----------------------- VALIDATION HELPERS ---------------- #
 def validate_environment():
     """Check all required dependencies and configurations"""
@@ -135,23 +138,40 @@ def validate_image_file(uploaded_file):
     """Validate uploaded image file"""
     errors = []
     
-    # Check file size
-    file_size = len(uploaded_file.getvalue())
-    max_size_bytes = AppConfig.MAX_FILE_SIZE_MB * 1024 * 1024
+    if uploaded_file is None:
+        errors.append("No file provided")
+        return errors
     
-    if file_size > max_size_bytes:
-        errors.append(f"File size exceeds {AppConfig.MAX_FILE_SIZE_MB}MB limit")
+    # Check file size
+    try:
+        file_size = len(uploaded_file.getvalue())
+        max_size_bytes = AppConfig.MAX_FILE_SIZE_MB * 1024 * 1024
+        
+        if file_size > max_size_bytes:
+            errors.append(f"File size exceeds {AppConfig.MAX_FILE_SIZE_MB}MB limit")
+        
+        if file_size == 0:
+            errors.append("File is empty")
+    except Exception as e:
+        errors.append(f"Could not read file: {e}")
     
     # Check file format
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    if file_extension not in AppConfig.SUPPORTED_FORMATS:
-        errors.append(f"Unsupported file format. Use: {', '.join(AppConfig.SUPPORTED_FORMATS)}")
+    try:
+        file_extension = uploaded_file.name.split('.')[-1].lower()
+        if file_extension not in AppConfig.SUPPORTED_FORMATS:
+            errors.append(f"Unsupported file format. Use: {', '.join(AppConfig.SUPPORTED_FORMATS)}")
+    except Exception as e:
+        errors.append(f"Invalid filename: {e}")
     
     return errors
 
 def validate_image_content(image):
     """Validate image content and dimensions"""
     errors = []
+    
+    if image is None:
+        errors.append("No image data")
+        return errors
     
     # Check image dimensions
     min_dimension = 50
@@ -165,6 +185,23 @@ def validate_image_content(image):
         errors.append(f"Invalid image file: {str(e)}")
     
     return errors
+
+def safe_open_image(uploaded_file):
+    """Safely open image with proper error handling"""
+    try:
+        # Reset file pointer to beginning
+        uploaded_file.seek(0)
+        
+        # Open image
+        image = Image.open(uploaded_file)
+        
+        # Convert to RGB if necessary (handles PNG with transparency, etc.)
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+            
+        return image, None
+    except Exception as e:
+        return None, f"Failed to open image: {str(e)}"
 
 # ----------------------- CORE HELPERS ---------------------- #
 def check_openai_setup():
@@ -234,7 +271,10 @@ def preprocess_image_for_model(image, img_size):
     """
     Convert PIL image → RGB → resize → EfficientNet preprocess → add batch dimension.
     """
-    image = image.convert("RGB")
+    # Ensure image is in RGB mode
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
+        
     img = image.resize(img_size)
     img_array = np.array(img).astype("float32")
     # IMPORTANT: use EfficientNet preprocess_input (no /255 here)
@@ -327,6 +367,8 @@ def handle_prediction_error(error):
         return "Image format not supported. Please try a different image."
     elif "index" in error_str:
         return "Model configuration error. Please check the class names file."
+    elif "nonetype" in error_str or "seek" in error_str:
+        return "File upload error. Please try uploading the image again."
     else:
         return f"Analysis failed: {error}"
 
@@ -418,8 +460,13 @@ with col1:
         label_visibility="collapsed"
     )
 
+    # Store uploaded file data in session state to prevent file object issues
+    if uploaded_file is not None:
+        st.session_state.uploaded_file_data = uploaded_file.getvalue()
+        st.session_state.uploaded_file_name = uploaded_file.name
+
     # Nice empty state
-    if uploaded_file is None:
+    if uploaded_file is None and st.session_state.uploaded_file_data is None:
         st.markdown(f"""
         <div class="upload-area">
             <div style="font-size: 3rem; margin-bottom: 1rem;">🌿</div>
@@ -431,31 +478,51 @@ with col1:
         </div>
         """, unsafe_allow_html=True)
 
-    if uploaded_file is not None:
+    # Process uploaded file
+    if st.session_state.uploaded_file_data is not None:
         try:
+            # Create a new file-like object from stored data
+            from io import BytesIO
+            file_like_object = BytesIO(st.session_state.uploaded_file_data)
+            
             # Validate file before processing
-            file_errors = validate_image_file(uploaded_file)
+            file_errors = validate_image_file(uploaded_file if uploaded_file is not None else type('MockFile', (), {
+                'getvalue': lambda: st.session_state.uploaded_file_data,
+                'name': getattr(st.session_state, 'uploaded_file_name', 'uploaded_image')
+            })())
+            
             if file_errors:
                 for error in file_errors:
                     st.error(f"❌ {error}")
+                # Clear invalid file data
+                st.session_state.uploaded_file_data = None
+                st.session_state.uploaded_file_name = None
                 st.stop()
 
             # Open and validate image
-            image = Image.open(uploaded_file)
+            image, open_error = safe_open_image(file_like_object)
+            if open_error:
+                st.error(f"❌ {open_error}")
+                st.session_state.uploaded_file_data = None
+                st.session_state.uploaded_file_name = None
+                st.stop()
+                
             image_errors = validate_image_content(image)
             if image_errors:
                 for error in image_errors:
                     st.error(f"❌ {error}")
+                st.session_state.uploaded_file_data = None
+                st.session_state.uploaded_file_name = None
                 st.stop()
 
             st.success("✅ **File uploaded successfully!**")
-            st.write(f"**Filename:** {uploaded_file.name}")
+            st.write(f"**Filename:** {getattr(st.session_state, 'uploaded_file_name', 'uploaded_image')}")
 
             # Preview
             st.image(image, caption="📷 Your Plant Leaf", width=400)
 
             # File info
-            file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+            file_size_mb = len(st.session_state.uploaded_file_data) / (1024 * 1024)
             st.write(
                 f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size_mb:.1f} MB"
             )
@@ -634,6 +701,9 @@ with col1:
 
         except Exception as e:
             st.error(f"❌ Unexpected error processing image: {e}")
+            # Clear corrupted file data
+            st.session_state.uploaded_file_data = None
+            st.session_state.uploaded_file_name = None
 
 with col2:
     # Sidebar / status info
@@ -703,3 +773,12 @@ st.markdown(f"""
     </p>
 </div>
 """, unsafe_allow_html=True)
+
+# Clear file data button for debugging
+with st.sidebar:
+    if st.button("Clear Uploaded Files"):
+        st.session_state.uploaded_file_data = None
+        st.session_state.uploaded_file_name = None
+        st.session_state.feedback_submitted = False
+        st.success("Uploaded files cleared!")
+        st.rerun()

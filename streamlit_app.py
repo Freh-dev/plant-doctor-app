@@ -496,22 +496,28 @@ with col2:
     """, unsafe_allow_html=True)
 
     # Tips
-    st.subheader("💡 Tips for Best Results")
-    tips = [
-        "Use clear, well-lit photos",
-        "Focus on the affected leaves",
-        "Include a plain, non-distracting background",
-        "Take multiple angles if you're unsure",
-        "Monitor your plant regularly for changes"
-    ]
-    for tip in tips:
-        st.markdown(f"""
+st.subheader("💡 Tips for Best Results")
+
+tips = [
+    "Use clear, well-lit photos",
+    "Focus on the affected leaves",
+    "Include a plain, non-distracting background",
+    "Take multiple angles if you're unsure",
+    "Monitor your plant regularly for changes",
+]
+
+for tip in tips:
+    st.markdown(
+        f"""
         <div style="background: white; border-radius: 10px; padding: 1rem;
                     margin: 0.6rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
                     border-left: 3px solid #3CB371;">
             <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
         </div>
-        """)
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ----------------------- FOOTER ---------------------------- #
 st.markdown("---")
@@ -521,4 +527,4 @@ st.markdown("""
         <strong>AI-powered plant health analysis</strong> • Keep your plants thriving 🌱
     </p>
 </div>
-""", unsafe_allow_html=True)
+""", unsafe_allow_html=True)"

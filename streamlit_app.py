@@ -1,5 +1,4 @@
-# streamlit_app.py – FINAL CLEAN VERSION (EfficientNetB2 + head)
-
+# streamlit_app.py – final, simplified version matching EfficientNetB2+head model
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -7,27 +6,25 @@ from PIL import Image
 import json
 import os
 import chatbot_helper
-from io import BytesIO
 
-# ----------------------- PAGE CONFIG ----------------------- #
+# ---------------- CONFIG ----------------
+MODEL_PATH = "plant_disease_final_model.keras"
+CLASS_NAMES_PATH = "class_names_final.json"
+IMG_SIZE = 224
+SUPPORTED_TYPES = ["jpg", "jpeg", "png"]
+
 st.set_page_config(
     page_title="Plant Doctor 🌿",
     page_icon="🌿",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ----------------------- SESSION STATE --------------------- #
+# ------------- SESSION STATE ------------
 if "prediction_history" not in st.session_state:
     st.session_state.prediction_history = []
 
-if "uploaded_file_data" not in st.session_state:
-    st.session_state.uploaded_file_data = None
-
-if "uploaded_file_name" not in st.session_state:
-    st.session_state.uploaded_file_name = None
-
-# ----------------------- STYLING --------------------------- #
+# ------------- STYLES -------------------
 st.markdown("""
 <style>
     .main-header {
@@ -44,7 +41,6 @@ st.markdown("""
         text-align: center;
         background: #F0FFF0;
         margin: 1.5rem 0;
-        transition: all 0.3s ease;
     }
     .status-card {
         background: white;
@@ -62,33 +58,9 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(46, 139, 87, 0.15);
         border: 1px solid #e0f0e0;
     }
-    .stButton button {
-        background: linear-gradient(135deg, #2E8B57, #228B22);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        padding: 0.7rem 1.5rem;
-        font-size: 1rem;
-        font-weight: 600;
-        width: 100%;
-    }
     .warning-box {
-        background: linear-gradient(135deg, #FFF3CD, #FFEAA7);
-        border: 2px solid #FFA500;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    .error-box {
-        background: linear-gradient(135deg, #F8D7DA, #F5C6CB);
-        border: 2px solid #DC3545;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
-    .debug-box {
-        background: linear-gradient(135deg, #E8F4FD, #D1ECF1);
-        border: 2px solid #17A2B8;
+        background: #FFF3CD;
+        border: 1px solid #FFA500;
         border-radius: 10px;
         padding: 1rem;
         margin: 1rem 0;
@@ -96,13 +68,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ----------------------- CONFIG --------------------------- #
-MODEL_PATH = "plant_disease_final_model.keras"
-CLASS_NAMES_PATH = "class_names_final.json"
-SUPPORTED_FORMATS = ["jpg", "jpeg", "png"]
-MAX_FILE_SIZE_MB = 200
-
-# ----------------------- HELPERS --------------------------- #
+# ------------- HELPERS ------------------
 def check_openai_setup():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -119,11 +85,10 @@ def check_openai_setup():
 def load_model():
     if not os.path.exists(MODEL_PATH):
         st.sidebar.error(f"❌ Model file not found: {MODEL_PATH}")
-        st.sidebar.write(f"Looking for: {os.path.abspath(MODEL_PATH)}")
         return None
     try:
         model = tf.keras.models.load_model(MODEL_PATH)
-        st.sidebar.success("✅ Model loaded successfully")
+        st.sidebar.success("✅ Model loaded")
         return model
     except Exception as e:
         st.sidebar.error(f"❌ Error loading model: {e}")
@@ -131,259 +96,185 @@ def load_model():
 
 @st.cache_data
 def load_class_names():
-    if not os.path.exists(CLASS_NAMES_PATH):
-        st.sidebar.error(f"❌ Class names file not found: {CLASS_NAMES_PATH}")
-        return None
     try:
         with open(CLASS_NAMES_PATH, "r") as f:
             class_names = json.load(f)
-        st.sidebar.success(f"✅ Loaded {len(class_names)} plant classes")
+        st.sidebar.info(f"✅ Loaded {len(class_names)} classes")
         return class_names
     except Exception as e:
         st.sidebar.error(f"❌ Error loading class names: {e}")
-        return None
+        return []
 
-def preprocess_image(image, img_size):
-    """Resize + normalize exactly like training (x / 255.0)."""
+def preprocess_image(image: Image.Image) -> np.ndarray:
+    """Match notebook: resize to 224x224, /255.0, RGB."""
     if image.mode != "RGB":
         image = image.convert("RGB")
-    img = image.resize(img_size)
-    arr = np.asarray(img).astype("float32") / 255.0
-    return np.expand_dims(arr, axis=0)
+    image = image.resize((IMG_SIZE, IMG_SIZE))
+    arr = np.array(image).astype("float32") / 255.0
+    arr = np.expand_dims(arr, axis=0)
+    return arr
 
-def predict_image(image, model, class_names, img_size):
-    try:
-        batch = preprocess_image(image, img_size)
-        preds = model.predict(batch, verbose=0)[0]
-        idx = int(np.argmax(preds))
-        if idx >= len(class_names):
-            return None, None, "Prediction index out of range", None
-        predicted_class = class_names[idx]
-        confidence = float(np.max(preds))
-        return predicted_class, confidence, None, preds
-    except Exception as e:
-        return None, None, str(e), None
+def predict_image(image, model, class_names):
+    arr = preprocess_image(image)
+    preds = model.predict(arr, verbose=0)[0]
+    idx = int(np.argmax(preds))
+    if idx >= len(class_names):
+        return None, None, preds
+    return class_names[idx], float(preds[idx]), preds
 
 def get_plant_advice(plant_name, disease):
     try:
         return chatbot_helper.generate_advice(plant_name, disease)
-    except Exception as e:
-        if "rate_limit" in str(e).lower() or "429" in str(e):
-            return "AI service rate limit reached. Using standard care advice instead."
-        return "AI advice currently unavailable. Using standard care advice instead."
+    except Exception:
+        return "AI advice currently unavailable. Please follow standard plant care practices."
 
 def display_fallback_advice(plant_name, disease):
     formatted_disease = disease.replace("_", " ").replace("___", " - ").title()
-    formatted_plant = plant_name.replace("_", " ").title()
     st.info(f"""
-    **🌱 Recommended Treatment for {formatted_disease} on {formatted_plant}**
+**🌱 Basic Care Tips for {formatted_disease}**
 
-    - Remove affected leaves to slow spread
-    - Avoid wetting leaves when watering
-    - Improve ventilation and avoid overcrowding
-    - Monitor daily and adjust sunlight and soil moisture
-    """)
+- Remove visibly infected leaves
+- Avoid overhead watering (water soil, not leaves)
+- Improve air circulation around the plant
+- Disinfect tools after pruning
+- Monitor the plant over the next 7–10 days
+""")
 
-# ----------------------- LOAD RESOURCES -------------------- #
+# ------------- LOAD RESOURCES -----------
 model = load_model()
 class_names = load_class_names()
 openai_ready = check_openai_setup()
 
-# Infer image size
-if model is not None and hasattr(model, "input_shape") and len(model.input_shape) == 4:
-    img_size = (model.input_shape[1], model.input_shape[2])
-else:
-    img_size = (224, 224)
-
-# ----------------------- SIDEBAR DEBUG --------------------- #
+# ------------- SIDEBAR ------------------
 with st.sidebar:
-    st.header("🔧 System Info")
+    st.header("🔧 Debug Info")
     st.write(f"Model loaded: {model is not None}")
-    st.write(f"Classes loaded: {len(class_names) if class_names else 0}")
+    st.write(f"Number of classes: {len(class_names)}")
     st.write(f"OpenAI ready: {openai_ready}")
-    st.write(f"Image size: {img_size}")
-    if model is not None:
-        st.write(f"Model input shape: {model.input_shape}")
-        st.write(f"Model output shape: {model.output_shape}")
+    st.write(f"Model path: {os.path.abspath(MODEL_PATH)}")
+    st.write(f"Class names path: {os.path.abspath(CLASS_NAMES_PATH)}")
 
-    if st.button("Clear Uploaded Image"):
-        st.session_state.uploaded_file_data = None
-        st.session_state.uploaded_file_name = None
-        st.session_state.prediction_history = []
-        st.success("Cleared!")
-        st.rerun()
+# stop if no model
+if model is None or not class_names:
+    st.error("Model or class names missing. Please upload both to the app folder.")
+    st.stop()
 
-# ----------------------- MAIN HEADER ----------------------- #
+# ------------- MAIN HEADER --------------
 st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
 st.markdown(
     '<p style="text-align: center; color: #666; margin-bottom: 2rem;">'
-    'Upload a plant leaf photo for instant AI-powered diagnosis and care advice.'
+    'Upload a plant leaf photo for AI-based disease prediction and care advice.'
     '</p>',
     unsafe_allow_html=True
 )
 
-if model is None or class_names is None:
-    st.error("⚠️ App is not fully configured. Please ensure the model and class names files are present.")
-    st.stop()
-
-# ----------------------- MAIN LAYOUT ----------------------- #
+# ------------- LAYOUT -------------------
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("📸 Upload Plant Image")
     uploaded_file = st.file_uploader(
         "Drag and drop your file here or click to browse",
-        type=SUPPORTED_FORMATS,
-        help=f"Supported formats: {', '.join(SUPPORTED_FORMATS)} • Max {MAX_FILE_SIZE_MB}MB",
-        label_visibility="collapsed"
+        type=SUPPORTED_TYPES,
+        help=f"Supported formats: {', '.join(SUPPORTED_TYPES)} • Max 200MB",
+        label_visibility="collapsed",
     )
 
-    if uploaded_file is not None:
-        st.session_state.uploaded_file_data = uploaded_file.getvalue()
-        st.session_state.uploaded_file_name = uploaded_file.name
-
-    if st.session_state.uploaded_file_data is None:
-        st.markdown(f"""
+    if uploaded_file is None:
+        st.markdown("""
         <div class="upload-area">
             <div style="font-size: 3rem; margin-bottom: 1rem;">🌿</div>
             <h3 style="color: #2E8B57; margin-bottom: 0.5rem;">Drag & Drop Your Plant Leaf Here</h3>
             <p style="color: #666; margin-bottom: 0.5rem;">or click the area above to browse files</p>
-            <p style="color: #888; font-size: 0.9rem; margin: 0;">
-                JPG, PNG, JPEG • Max {MAX_FILE_SIZE_MB}MB
-            </p>
+            <p style="color: #888; font-size: 0.9rem; margin: 0;">JPG, PNG, JPEG • Max 200MB</p>
         </div>
         """, unsafe_allow_html=True)
 
-    if st.session_state.uploaded_file_data is not None:
-        try:
-            img_bytes = BytesIO(st.session_state.uploaded_file_data)
-            image = Image.open(img_bytes)
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        st.success("✅ File uploaded!")
+        st.write(f"**Filename:** {uploaded_file.name}")
+        st.image(image, caption="📷 Your Plant Leaf", width=400)
 
-            st.success("✅ File uploaded successfully!")
-            st.write(f"**Filename:** {st.session_state.uploaded_file_name}")
-            st.image(image, caption="📷 Your Plant Leaf", width=400)
+        if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
+            with st.spinner("🔬 Analyzing your plant..."):
+                disease, confidence, preds = predict_image(image, model, class_names)
 
-            file_size_mb = len(st.session_state.uploaded_file_data) / (1024 * 1024)
-            st.write(f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size_mb:.1f} MB")
+            if disease is None:
+                st.error("Prediction index out of range. Check class_names_final.json.")
+            else:
+                st.session_state.prediction_history.append(disease)
+                formatted = (disease.replace('___', ' - ')
+                                   .replace('__', ' - ')
+                                   .replace('_', ' '))
 
-            if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
-                with st.spinner("🔬 Analyzing your plant..."):
-                    # use a fresh copy for prediction
-                    pred_img = Image.open(BytesIO(st.session_state.uploaded_file_data))
-                    disease, confidence, error, raw_preds = predict_image(pred_img, model, class_names, img_size)
+                # Diagnosis card
+                st.subheader("📋 Diagnosis Results")
+                healthy = "healthy" in disease.lower()
+                emoji = "✅" if healthy else "⚠️"
+                status = "Healthy Plant" if healthy else "Needs Attention"
+                color = "#2E8B57" if healthy else "#FFA500"
 
-                if error:
-                    st.error(f"❌ Analysis failed: {error}")
-                else:
-                    st.session_state.prediction_history.append(disease)
-                    if len(st.session_state.prediction_history) > 10:
-                        st.session_state.prediction_history.pop(0)
+                st.markdown(f"""
+                <div class="diagnosis-card">
+                    <div style="text-align: center; margin-bottom: 1.2rem;">
+                        <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">{emoji}</div>
+                        <span style="background: {color}; color: white; padding: 0.4rem 0.8rem;
+                                     border-radius: 15px; font-weight: 600;">
+                            {status}
+                        </span>
+                    </div>
+                    <h3 style="color: {color}; text-align: center; margin-bottom: 0.8rem;">
+                        {formatted}
+                    </h3>
+                    <div style="text-align: center;">
+                        <p style="font-size: 1.1rem; color: #666; margin-bottom: 0.5rem;">Confidence</p>
+                        <h2 style="color: {color}; font-size: 2rem; margin: 0.3rem 0;">
+                            {confidence:.1%}
+                        </h2>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                    # ---- Diagnosis card ----
-                    st.subheader("📋 Diagnosis Results")
-                    nice_name = (
-                        disease.replace("___", " - ")
-                               .replace("__", " - ")
-                               .replace("_", " ")
-                    )
-
-                    if "healthy" in disease.lower():
-                        status_emoji = "✅"
-                        status_text = "Healthy Plant"
-                        status_color = "#2E8B57"
-                    else:
-                        status_emoji = "⚠️"
-                        status_text = "Needs Attention"
-                        status_color = "#FFA500"
-
-                    st.markdown(f"""
-                    <div class="diagnosis-card">
-                        <div style="text-align: center; margin-bottom: 1.2rem;">
-                            <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">{status_emoji}</div>
-                            <span style="background: {status_color}; color: white; padding: 0.4rem 0.8rem;
-                                         border-radius: 15px; font-weight: 600;">
-                                {status_text}
-                            </span>
-                        </div>
-                        <h3 style="color: {status_color}; text-align: center; margin-bottom: 0.8rem;">
-                            {nice_name}
-                        </h3>
-                        <div style="text-align: center;">
-                            <p style="font-size: 1.1rem; color: #666; margin-bottom: 0.5rem;">Confidence Level</p>
-                            <h2 style="color: {status_color}; font-size: 2rem; margin: 0.3rem 0;">
-                                {confidence:.1%}
-                            </h2>
-                        </div>
+                # Confidence warning
+                if confidence < 0.4:
+                    st.markdown("""
+                    <div class="warning-box">
+                        <h4>⚠️ Low Confidence</h4>
+                        <p>The model is not very confident. Try:</p>
+                        <ul>
+                            <li>Using a clearer, well-lit photo</li>
+                            <li>Focusing on a single leaf</li>
+                            <li>Uploading multiple images</li>
+                        </ul>
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Confidence warning
-                    if confidence < 0.4:
-                        st.markdown("""
-                        <div class="warning-box">
-                            <h4>⚠️ Low Confidence Warning</h4>
-                            <p>Try a clearer, well-lit image focusing on the affected area.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    elif confidence < 0.75:
-                        st.markdown("""
-                        <div class="warning-box">
-                            <h4>⚠️ Moderate Confidence</h4>
-                            <p>You may want to upload more images or consult a plant expert.</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.success("✅ High Confidence – prediction is likely reliable.")
+                # Debug expander
+                with st.expander("🔧 Debug Info"):
+                    st.write("Predicted class:", disease)
+                    st.write("Raw confidence:", confidence)
+                    if preds is not None:
+                        top5 = np.argsort(preds)[-5:][::-1]
+                        st.write("Top 5 predictions:")
+                        for idx in top5:
+                            st.write(f"- {class_names[idx]}: {preds[idx]:.3f} ({preds[idx]*100:.1f}%)")
 
-                    # Debug info
-                    with st.expander("🔧 Technical Details"):
-                        st.markdown('<div class="debug-box"><h4>🛠️ Preprocessing & Prediction Debug</h4></div>',
-                                    unsafe_allow_html=True)
-                        batch = preprocess_image(image, img_size)
-                        st.write("Preprocessing:")
-                        st.write({
-                            "original_size": image.size,
-                            "array_shape": batch.shape[1:],
-                            "array_min": float(batch.min()),
-                            "array_max": float(batch.max()),
-                            "array_mean": float(batch.mean())
-                        })
-                        if raw_preds is not None:
-                            st.write("Prediction:")
-                            st.write(f"Predicted class: {disease}")
-                            st.write(f"Raw confidence: {confidence:.4f}")
-                            st.write(f"Raw preds shape: {raw_preds.shape}")
-                            st.write(f"Max / Min / Mean: {raw_preds.max():.6f} / {raw_preds.min():.6f} / {raw_preds.mean():.6f}")
-                            st.write("Top 5 classes:")
-                            top5 = np.argsort(raw_preds)[-5:][::-1]
-                            for idx in top5:
-                                st.write(f"{idx}: {class_names[idx]} - {raw_preds[idx]:.4f} ({raw_preds[idx]*100:.2f}%)")
+                # Care advice
+                st.markdown("---")
+                st.subheader("💡 Care Instructions")
+                plant_name = disease.split("_")[0] if "_" in disease else "plant"
 
-                    # Care instructions
-                    st.markdown("---")
-                    st.subheader("💡 Care Instructions")
-                    plant_name = disease.split("_")[0] if "_" in disease else "plant"
-
-                    if openai_ready:
-                        with st.spinner("🤖 Generating personalized care advice..."):
-                            advice = get_plant_advice(plant_name, disease)
-                        if any(x in advice for x in ["OpenAI", "API key", "rate limit"]):
-                            st.warning("⚠️ Using fallback care advice (AI service issue).")
-                            display_fallback_advice(plant_name, disease)
-                        else:
-                            st.success("✅ AI-Generated Personalized Advice")
-                            st.info(advice)
-                    else:
-                        st.warning("⚠️ Using standard care advice (AI not configured).")
-                        display_fallback_advice(plant_name, disease)
-
-        except Exception as e:
-            st.error(f"❌ Error processing image: {e}")
+                if openai_ready:
+                    with st.spinner("🤖 Generating AI care advice..."):
+                        advice = get_plant_advice(plant_name, disease)
+                    st.info(advice)
+                else:
+                    display_fallback_advice(plant_name, disease)
 
 with col2:
     st.subheader("System Status")
     st.write("Real-time service monitoring")
-
     st.markdown("""
     <div class="status-card">
         <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ Model Active</h4>
@@ -406,6 +297,7 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
 
+    # Plant types metric
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #2E8B57, #228B22);
                 color: white; border-radius: 10px; padding: 1.2rem;
@@ -418,15 +310,16 @@ with col2:
     if st.session_state.prediction_history:
         st.subheader("📊 Recent Predictions")
         for pred in st.session_state.prediction_history[-5:]:
-            st.write("•", pred.replace("_", " ").title())
+            st.write("•", pred.replace("_", " ").replace("___", " - ").title())
 
     st.subheader("💡 Tips for Best Results")
-    for tip in [
+    tips = [
         "Use clear, well-lit photos",
-        "Focus on the affected leaves",
-        "Avoid blurry or dark images",
-        "Use a simple, non-distracting background",
-    ]:
+        "Focus on the leaf, not the whole plant",
+        "Avoid very dark or blurry images",
+        "Try multiple leaves if symptoms differ",
+    ]
+    for tip in tips:
         st.markdown(f"""
         <div style="background: white; border-radius: 10px; padding: 1rem;
                     margin: 0.6rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08);

@@ -106,16 +106,19 @@ def load_class_names():
         return []
 
 def preprocess_image(image: Image.Image) -> np.ndarray:
-    """Match notebook: resize to 224x224, /255.0, RGB."""
+    """Resize to 224x224 RGB; no manual scaling because model handles it."""
     if image.mode != "RGB":
         image = image.convert("RGB")
     image = image.resize((IMG_SIZE, IMG_SIZE))
-    arr = np.array(image).astype("float32") / 255.0
+    arr = np.array(image).astype("float32")   # <-- no /255 here
     arr = np.expand_dims(arr, axis=0)
     return arr
 
 def predict_image(image, model, class_names):
     arr = preprocess_image(image)
+    # quick debug
+    st.write("🛠️ Preprocessing debug:",
+             f"shape={arr.shape}, min={arr.min():.1f}, max={arr.max():.1f}, mean={arr.mean():.1f}")
     preds = model.predict(arr, verbose=0)[0]
     idx = int(np.argmax(preds))
     if idx >= len(class_names):
@@ -153,6 +156,9 @@ with st.sidebar:
     st.write(f"OpenAI ready: {openai_ready}")
     st.write(f"Model path: {os.path.abspath(MODEL_PATH)}")
     st.write(f"Class names path: {os.path.abspath(CLASS_NAMES_PATH)}")
+    if model is not None:
+        st.write(f"Model input shape: {model.input_shape}")
+        st.write(f"Model output shape: {model.output_shape}")
 
 # stop if no model
 if model is None or not class_names:
@@ -257,8 +263,8 @@ with col1:
                     if preds is not None:
                         top5 = np.argsort(preds)[-5:][::-1]
                         st.write("Top 5 predictions:")
-                        for idx in top5:
-                            st.write(f"- {class_names[idx]}: {preds[idx]:.3f} ({preds[idx]*100:.1f}%)")
+                        for i in top5:
+                            st.write(f"- {class_names[i]}: {preds[i]:.3f} ({preds[i]*100:.1f}%)")
 
                 # Care advice
                 st.markdown("---")

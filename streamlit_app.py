@@ -1,4 +1,4 @@
-# streamlit_app.py - UPDATED VERSION USING LOCAL KERAS MODEL (FIXED PREPROCESSING)
+# streamlit_app.py - FIXED VERSION WITH PROPER IMAGE HANDLING
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -6,6 +6,7 @@ from PIL import Image
 import json
 import os
 import chatbot_helper
+from io import BytesIO
 
 # 🆕 EfficientNet preprocessing (must match training)
 from tensorflow.keras.applications.efficientnet import preprocess_input
@@ -21,6 +22,9 @@ st.set_page_config(
 # ----------------------- SESSION STATE --------------------- #
 if "prediction_history" not in st.session_state:
     st.session_state.prediction_history = []
+
+if "uploaded_file_data" not in st.session_state:
+    st.session_state.uploaded_file_data = None
 
 # ----------------------- STYLING --------------------------- #
 st.markdown("""
@@ -277,8 +281,13 @@ with col1:
         label_visibility="collapsed"
     )
 
+    # Store file data in session state immediately
+    if uploaded_file is not None:
+        st.session_state.uploaded_file_data = uploaded_file.getvalue()
+        st.session_state.uploaded_file_name = uploaded_file.name
+
     # Nice empty state
-    if uploaded_file is None:
+    if uploaded_file is None and st.session_state.uploaded_file_data is None:
         st.markdown("""
         <div class="upload-area">
             <div style="font-size: 3rem; margin-bottom: 1rem;">🌿</div>
@@ -288,27 +297,34 @@ with col1:
         </div>
         """, unsafe_allow_html=True)
 
-    if uploaded_file is not None:
+    # Process uploaded file from session state data
+    if st.session_state.uploaded_file_data is not None:
         try:
-            image = Image.open(uploaded_file)
+            # Create a fresh image object from stored data for display
+            image_data = BytesIO(st.session_state.uploaded_file_data)
+            display_image = Image.open(image_data)
 
             st.success("✅ **File uploaded successfully!**")
-            st.write(f"**Filename:** {uploaded_file.name}")
+            st.write(f"**Filename:** {st.session_state.uploaded_file_name}")
 
             # Preview
-            st.image(image, caption="📷 Your Plant Leaf", width=400)
+            st.image(display_image, caption="📷 Your Plant Leaf", width=400)
 
             # File info
-            file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+            file_size_mb = len(st.session_state.uploaded_file_data) / (1024 * 1024)
             st.write(
-                f"**Image Details:** {image.size[0]} × {image.size[1]} pixels • {file_size_mb:.1f} MB"
+                f"**Image Details:** {display_image.size[0]} × {display_image.size[1]} pixels • {file_size_mb:.1f} MB"
             )
 
             # Analyze button
             if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
                 with st.spinner("🔬 Analyzing your plant..."):
+                    # 🆕 CRITICAL FIX: Create a FRESH image object for prediction
+                    prediction_image_data = BytesIO(st.session_state.uploaded_file_data)
+                    prediction_image = Image.open(prediction_image_data)
+                    
                     disease, confidence, error = predict_image(
-                        image, model, class_names, img_size
+                        prediction_image, model, class_names, img_size
                     )
 
                 if error:
@@ -419,7 +435,10 @@ with col1:
                         st.write(f"Model input size: {img_size}")
                         st.write(f"Available classes: {len(class_names)}")
                         st.write(f"Recent predictions: {st.session_state.prediction_history}")
-                        debug_model_predictions(image, model, class_names, img_size)
+                        # Use fresh image for debug predictions too
+                        debug_image_data = BytesIO(st.session_state.uploaded_file_data)
+                        debug_image = Image.open(debug_image_data)
+                        debug_model_predictions(debug_image, model, class_names, img_size)
 
                     # ----------------- USER FEEDBACK ------------------- #
                     st.markdown("---")
@@ -511,7 +530,15 @@ with col2:
                     border-left: 3px solid #3CB371;">
             <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
         </div>
-        """)
+        """, unsafe_allow_html=True)
+
+# Clear uploaded file button in sidebar
+with st.sidebar:
+    if st.button("Clear Uploaded Image"):
+        st.session_state.uploaded_file_data = None
+        st.session_state.uploaded_file_name = None
+        st.success("Uploaded image cleared!")
+        st.rerun()
 
 # ----------------------- FOOTER ---------------------------- #
 st.markdown("---")

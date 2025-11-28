@@ -1,4 +1,4 @@
-# streamlit_app.py - UPDATED VERSION USING LOCAL KERAS MODEL
+# streamlit_app.py - FINAL VERSION USING SAVED KERAS MODEL (FIXED PREPROCESSING)
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -6,6 +6,9 @@ from PIL import Image
 import json
 import os
 import chatbot_helper
+
+# 🆕 IMPORT THE SAME PREPROCESS AS TRAINING (EfficientNetB2)
+from tensorflow.keras.applications.efficientnet import preprocess_input
 
 # ----------------------- PAGE CONFIG ----------------------- #
 st.set_page_config(
@@ -51,7 +54,7 @@ st.markdown("""
     
     .diagnosis-card {
         background: linear-gradient(135deg, #ffffff, #f8fff8);
-        border-radius: 12px;
+        border-radius: 15px;
         padding: 1.5rem;
         margin: 1.2rem 0;
         box-shadow: 0 4px 12px rgba(46, 139, 87, 0.15);
@@ -102,17 +105,20 @@ def check_openai_setup():
     except Exception:
         return False
 
-# Updated paths - looking in current directory
+# Path to your model on the Streamlit server
 MODEL_PATH = "plant_disease_final_model.keras"
-CLASS_NAMES_PATH = "class_names_final.json"
+
+# Public Drive link so others can download the model manually if needed
+MODEL_LINK = "https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
 
 @st.cache_resource
 def load_model():
     """Load the trained Keras model from local file."""
     if not os.path.exists(MODEL_PATH):
-        st.sidebar.error("❌ Model file not found in current directory.")
-        st.sidebar.write(f"Looking for: {os.path.abspath(MODEL_PATH)}")
-        st.sidebar.write("Please make sure the model file is in the same directory as this script.")
+        st.sidebar.error("❌ Model file not found on the server.")
+        st.sidebar.write("Please download the model from:")
+        st.sidebar.write(MODEL_LINK)
+        st.sidebar.write("and place it in the same folder as `streamlit_app.py`.")
         return None
 
     try:
@@ -127,43 +133,50 @@ def load_model():
 def load_class_names():
     """Load class names from json file."""
     try:
-        with open(CLASS_NAMES_PATH, "r") as f:
+        with open("class_names_final.json", "r") as f:
             class_names = json.load(f)
         st.sidebar.info(f"✅ Loaded {len(class_names)} plant classes")
         return class_names
-    except Exception as e:
-        st.sidebar.warning(f"Could not load {CLASS_NAMES_PATH}, using default placeholder labels.")
+    except Exception:
+        st.sidebar.warning("Could not load class_names_final.json, using default placeholder labels.")
         return [
             "Apple_healthy",
             "Apple_apple_scab",
-            "Tomato_healthy", 
+            "Tomato_healthy",
             "Tomato_early_blight",
             "Tomato_late_blight"
         ]
 
+# 🆕 ONE CENTRAL PREPROCESSING FUNCTION
+def preprocess_image_for_model(image, img_size):
+    """
+    Convert PIL image → RGB → resize → EfficientNet preprocess → add batch dimension.
+    This MUST match whatever you used during training.
+    """
+    image = image.convert("RGB")
+    img = image.resize(img_size)
+    img_array = np.array(img).astype("float32")
+    # IMPORTANT: use EfficientNet's preprocess_input (no /255 here)
+    img_array = preprocess_input(img_array)
+    img_array = np.expand_dims(img_array, axis=0)
+    return img_array
+
 def predict_image(image, model, class_names, img_size):
     """Run model prediction on a PIL.Image and return (class, confidence, error_msg)."""
     try:
-        img = image.resize(img_size)
-        img_array = np.array(img) / 255.0
-        img_array = np.expand_dims(img_array, axis=0)
-
-        prediction = model.predict(img_array, verbose=0)[0]
+        img_batch = preprocess_image_for_model(image, img_size)
+        prediction = model.predict(img_batch, verbose=0)[0]
         predicted_index = int(np.argmax(prediction))
         predicted_class = class_names[predicted_index]
         confidence = float(np.max(prediction))
-
         return predicted_class, confidence, None
     except Exception as e:
         return None, None, str(e)
 
 def debug_model_predictions(image, model, class_names, img_size):
     """Show top-5 predictions for debugging."""
-    img = image.resize(img_size)
-    img_array = np.array(img) / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-
-    prediction = model.predict(img_array, verbose=0)[0]
+    img_batch = preprocess_image_for_model(image, img_size)
+    prediction = model.predict(img_batch, verbose=0)[0]
     top_5_indices = np.argsort(prediction)[-5:][::-1]
 
     st.write("🔍 **Debug - Top 5 Predictions:**")
@@ -206,11 +219,11 @@ model = load_model()
 class_names = load_class_names()
 openai_ready = check_openai_setup()
 
-# Automatically infer image size from the model if possible
+# IMPORTANT: this should match the model's input shape when you created it in Colab
 if model is not None and hasattr(model, "input_shape") and len(model.input_shape) == 4:
     img_size = (model.input_shape[1], model.input_shape[2])
 else:
-    img_size = (128, 128)  # fallback
+    img_size = (224, 224)  # fallback for EfficientNetB2
 
 # ----------------------- SIDEBAR DEBUG --------------------- #
 with st.sidebar:
@@ -221,12 +234,8 @@ with st.sidebar:
     if class_names:
         st.write("Sample classes:", class_names[:5])
     st.write("Model file path:", os.path.abspath(MODEL_PATH))
-    st.write("Class names path:", os.path.abspath(CLASS_NAMES_PATH))
-    
-    # Show current directory contents for debugging
-    st.write("Current directory files:")
-    current_files = [f for f in os.listdir('.') if os.path.isfile(f)]
-    st.write(current_files[:10])  # Show first 10 files
+    st.write("Class names path:", os.path.abspath("class_names_final.json"))
+    st.write("Current directory files:", os.listdir("."))
 
 # ----------------------- MAIN HEADER ----------------------- #
 st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
@@ -239,18 +248,15 @@ st.markdown(
 
 # If model is missing, show error and stop
 if model is None:
-    st.error(f"""
+    st.error("""
     ## 🔧 Service Temporarily Unavailable
     
-    The model file **{MODEL_PATH}** is not available in the current directory.
+    The model file **plant_disease_final_model.keras** is not available on the server.
     
     Please make sure:
     - The file exists in the same directory as `streamlit_app.py`
-    - The filename is exactly: `{MODEL_PATH}`
-    - The file matches the `{CLASS_NAMES_PATH}` label order
-    
-    **Current directory:** {os.getcwd()}
-    **Looking for:** {os.path.abspath(MODEL_PATH)}
+    - The filename is exactly correct
+    - The file matches the `class_names_final.json` label order
     """)
     st.stop()
 
@@ -318,7 +324,7 @@ with col1:
                     # ----------------- DIAGNOSIS CARD ----------------- #
                     st.subheader("📋 Diagnosis Results")
 
-                    formatted_disease = disease.replace("_", " ").title()
+                    formatted_disease = disease.replace("_", " ").replace("___", " - ").replace("__", " - ")
 
                     if "healthy" in disease.lower():
                         status_emoji = "✅"

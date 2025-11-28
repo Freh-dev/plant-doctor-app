@@ -1,4 +1,4 @@
-# streamlit_app.py - FIXED VERSION (NO TOMATO FALLBACK, STRICT LABEL CHECK)
+# streamlit_app.py - FIXED VERSION MATCHING TRAINING PIPELINE
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -7,8 +7,6 @@ import json
 import os
 import chatbot_helper
 from io import BytesIO
-
-from tensorflow.keras.applications.efficientnet import preprocess_input
 
 # ----------------------- PAGE CONFIG ----------------------- #
 st.set_page_config(
@@ -106,6 +104,7 @@ st.markdown("""
 
 # ----------------------- HELPERS --------------------------- #
 def check_openai_setup():
+    """Check if OpenAI advice helper is configured."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         return False
@@ -117,11 +116,13 @@ def check_openai_setup():
     except Exception:
         return False
 
+# Paths in current directory
 MODEL_PATH = "plant_disease_final_model.keras"
 CLASS_NAMES_PATH = "class_names_final.json"
 
 @st.cache_resource
 def load_model():
+    """Load the trained Keras model from local file."""
     if not os.path.exists(MODEL_PATH):
         st.sidebar.error("❌ Model file not found in current directory.")
         st.sidebar.write(f"Looking for: {os.path.abspath(MODEL_PATH)}")
@@ -137,83 +138,84 @@ def load_model():
 
 @st.cache_data
 def load_class_names():
-    """Load class names from json file. If it fails, return empty list (no fallback)."""
+    """Load class names from json file with basic validation."""
     try:
-        if not os.path.exists(CLASS_NAMES_PATH):
-            raise FileNotFoundError(f"{CLASS_NAMES_PATH} not found")
         with open(CLASS_NAMES_PATH, "r") as f:
             class_names = json.load(f)
-
-        if not isinstance(class_names, list):
-            raise ValueError("class_names_final.json must contain a list")
-        if len(class_names) == 0:
-            raise ValueError("class_names_final.json is empty")
-
+        
         st.sidebar.success(f"✅ Loaded {len(class_names)} plant classes")
+        
+        # Validate class names
+        if not class_names:
+            st.sidebar.error("❌ Class names file is empty!")
+            return ["Unknown_Class_0", "Unknown_Class_1"]
+            
+        # If it's a dict { "0": "Apple___...", ... } convert to list
+        if isinstance(class_names, dict):
+            # sort by key just in case
+            keys = sorted(class_names.keys(), key=lambda x: int(x))
+            class_names = [class_names[k] for k in keys]
+        
         return class_names
+        
     except Exception as e:
         st.sidebar.error(f"❌ Error loading class names: {e}")
-        st.sidebar.error("❌ Cannot safely continue without correct class names.")
-        return []
+        # Simple fallback so app doesn’t crash
+        fallback_classes = [f"Class_{i}" for i in range(10)]
+        st.sidebar.warning("⚠️ Using fallback class names (for debugging only)")
+        return fallback_classes
 
+# ---------------- PREPROCESSING (MATCHES TRAINING!) -------- #
 def preprocess_image_for_model(image, img_size):
     """
-    Convert PIL image → RGB → resize → EfficientNet preprocess → add batch dimension.
-    Must match training.
+    Convert PIL image → RGB → resize → /255.0 normalization → add batch dimension.
+    This MUST match the training pipeline in the notebook.
     """
     try:
+        # Convert to RGB if necessary
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
+        # Resize image
         img = image.resize(img_size)
-        img_array = np.array(img).astype("float32")
+        img_array = np.array(img).astype("float32") / 255.0   # <-- SAME as training
 
         debug_info = {
             "original_size": image.size,
             "resized_size": img.size,
             "array_shape": img_array.shape,
-            "array_range": f"{np.min(img_array):.1f} to {np.max(img_array):.1f}",
-            "array_mean": f"{np.mean(img_array):.1f}",
-            "array_dtype": img_array.dtype
+            "array_range": f"{np.min(img_array):.3f} to {np.max(img_array):.3f}",
+            "array_mean": f"{np.mean(img_array):.3f}",
+            "array_dtype": str(img_array.dtype),
         }
 
-        img_array = preprocess_input(img_array)
-
-        debug_info["preprocessed_range"] = f"{np.min(img_array):.1f} to {np.max(img_array):.1f}"
-        debug_info["preprocessed_mean"] = f"{np.mean(img_array):.1f}"
-
-        img_array = np.expand_dims(img_array, axis=0)
+        img_array = np.expand_dims(img_array, axis=0)  # (1, H, W, 3)
         debug_info["final_shape"] = img_array.shape
-
+        
         return img_array, debug_info
-
+        
     except Exception as e:
         raise Exception(f"Image preprocessing failed: {e}")
 
 def predict_image(image, model, class_names, img_size):
-    """
-    Run model prediction on a PIL.Image and return:
-    (predicted_class, confidence, error_msg, debug_info, raw_prediction_vector)
-    """
+    """Run model prediction on a PIL.Image and return (class, confidence, error_msg, debug_info, raw_pred)."""
     try:
         img_batch, debug_info = preprocess_image_for_model(image, img_size)
         prediction = model.predict(img_batch, verbose=0)[0]
         predicted_index = int(np.argmax(prediction))
-
-        if predicted_index >= len(class_names):
-            return None, None, (
-                f"Prediction index {predicted_index} out of range for "
-                f"{len(class_names)} classes"
-            ), None, None
         
+        if predicted_index >= len(class_names):
+            return None, None, f"Prediction index {predicted_index} out of range for {len(class_names)} classes", None, None
+            
         predicted_class = class_names[predicted_index]
         confidence = float(np.max(prediction))
         return predicted_class, confidence, None, debug_info, prediction
-
+        
     except Exception as e:
         return None, None, str(e), None, None
 
 def get_plant_advice(plant_name, disease):
+    """Try to get advice from chatbot_helper, fall back if error."""
     try:
         return chatbot_helper.generate_advice(plant_name, disease)
     except Exception as e:
@@ -222,6 +224,7 @@ def get_plant_advice(plant_name, disease):
         return "AI advice currently unavailable. Using standard care advice instead."
 
 def display_fallback_advice(plant_name, disease):
+    """Static care guide if AI advice is unavailable."""
     formatted_disease = disease.replace("_", " ").title()
     formatted_plant = plant_name.replace("_", " ").title()
     
@@ -250,72 +253,31 @@ model = load_model()
 class_names = load_class_names()
 openai_ready = check_openai_setup()
 
-# Check consistency between model and class_names
-class_mismatch = False
-num_model_classes = None
-if model is not None:
-    try:
-        num_model_classes = int(model.output_shape[-1])
-    except Exception:
-        num_model_classes = None
-
-if model is not None and class_names:
-    if num_model_classes is not None and num_model_classes != len(class_names):
-        class_mismatch = True
-        st.sidebar.error(
-            f"❌ Class mismatch: model has {num_model_classes} outputs, "
-            f"but {len(class_names)} class names."
-        )
-
-# Infer image size
+# Automatically infer image size from the model if possible
 if model is not None and hasattr(model, "input_shape") and len(model.input_shape) == 4:
     img_size = (model.input_shape[1], model.input_shape[2])
 else:
-    img_size = (224, 224)
-    st.sidebar.warning(f"Using default image size: {img_size}")
+    img_size = (224, 224)  # same as IMG_SIZE in notebook
 
 # ----------------------- SIDEBAR DEBUG --------------------- #
 with st.sidebar:
     st.header("🔧 System Configuration")
     st.write(f"Model loaded: {model is not None}")
-    st.write(f"Class names loaded: {len(class_names)}")
-    st.write(f"Model outputs: {num_model_classes if num_model_classes is not None else 'Unknown'}")
+    st.write(f"Number of classes: {len(class_names)}")
     st.write(f"OpenAI ready: {openai_ready}")
     st.write(f"Image size: {img_size}")
-    if class_mismatch:
-        st.write("⚠️ Class / output mismatch detected")
-
+    
+    if model is not None:
+        st.write(f"Model input shape: {model.input_shape}")
+        st.write(f"Model output shape: {model.output_shape}")
+    
     if class_names:
         st.write("First 8 classes:")
         for i, cls in enumerate(class_names[:8]):
             st.write(f"  {i}: {cls}")
-
-    st.markdown("---")
-    st.header("🧪 Model Testing")
     
-    if st.button("Test with Sample Images"):
-        if model is None or not class_names or class_mismatch:
-            st.error("❌ Model / class setup invalid. Cannot run tests.")
-        else:
-            st.info("Testing model with simple synthetic images (for debugging only)...")
-            test_images = {
-                "Green (healthy-like)": Image.new('RGB', img_size, (100, 200, 100)),
-                "Brown (disease-like)": Image.new('RGB', img_size, (150, 100, 50)),
-                "Yellow (deficiency-like)": Image.new('RGB', img_size, (250, 250, 100)),
-            }
-            for name, test_img in test_images.items():
-                with st.expander(f"Test: {name}"):
-                    disease, confidence, error, debug_info, raw_pred = predict_image(
-                        test_img, model, class_names, img_size
-                    )
-                    if error:
-                        st.error(f"❌ {error}")
-                    else:
-                        st.write(f"**Prediction:** {disease}")
-                        st.write(f"**Confidence:** {confidence:.1%}")
-                        if raw_pred is not None:
-                            st.write(f"**Raw max probability:** {np.max(raw_pred):.4f}")
-
+    st.markdown("---")
+    # Clear data button
     if st.button("Clear All Data"):
         st.session_state.uploaded_file_data = None
         st.session_state.uploaded_file_name = None
@@ -332,26 +294,20 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ----------------------- HARD STOP IF CONFIG BAD ----------- #
-if model is None or not class_names or class_mismatch:
+# If model is missing, show error and stop
+if model is None or not class_names:
     st.error(f"""
-    ## 🔧 Service Configuration Problem
+    ## 🔧 Service Temporarily Unavailable
     
-    I can't safely run predictions because the model outputs and class names are not aligned.
+    The model file **{MODEL_PATH}** and/or class names **{CLASS_NAMES_PATH}** are not available.
     
-    - Model file present: **{MODEL_PATH}** → {'✅' if model is not None else '❌'}
-    - Class names file present: **{CLASS_NAMES_PATH}** → {'✅' if class_names else '❌'}
-    - Model output units: **{num_model_classes if num_model_classes is not None else 'Unknown'}**
-    - Number of class names: **{len(class_names)}**
-    - Match required: these two numbers **must be equal**.
-    
-    Please double-check:
-    1. `plant_disease_final_model.keras` and `class_names_final.json` come from the **same training run**.
-    2. `class_names_final.json` contains exactly **one label per output neuron** (e.g., 38 entries).
+    Please make sure:
+    - Both files exist in the same directory as `streamlit_app.py`
+    - Filenames are exactly correct
     """)
     st.stop()
 
-# ----------------------- MAIN LAYOUT ----------------------- #
+# ----------------------- LAYOUT ---------------------------- #
 col1, col2 = st.columns([2, 1])
 
 with col1:
@@ -365,10 +321,12 @@ with col1:
         label_visibility="collapsed"
     )
 
+    # Store file data in session state immediately
     if uploaded_file is not None:
         st.session_state.uploaded_file_data = uploaded_file.getvalue()
         st.session_state.uploaded_file_name = uploaded_file.name
 
+    # Nice empty state
     if uploaded_file is None and st.session_state.uploaded_file_data is None:
         st.markdown("""
         <div class="upload-area">
@@ -379,23 +337,29 @@ with col1:
         </div>
         """, unsafe_allow_html=True)
 
+    # Process uploaded file from session state data
     if st.session_state.uploaded_file_data is not None:
         try:
+            # Create a fresh image object from stored data for display
             image_data = BytesIO(st.session_state.uploaded_file_data)
             display_image = Image.open(image_data)
 
             st.success("✅ **File uploaded successfully!**")
             st.write(f"**Filename:** {st.session_state.uploaded_file_name}")
 
+            # Preview
             st.image(display_image, caption="📷 Your Plant Leaf", width=400)
 
+            # File info
             file_size_mb = len(st.session_state.uploaded_file_data) / (1024 * 1024)
             st.write(
                 f"**Image Details:** {display_image.size[0]} × {display_image.size[1]} pixels • {file_size_mb:.1f} MB"
             )
 
+            # Analyze button
             if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
                 with st.spinner("🔬 Analyzing your plant..."):
+                    # Create a FRESH image object for prediction
                     prediction_image_data = BytesIO(st.session_state.uploaded_file_data)
                     prediction_image = Image.open(prediction_image_data)
                     
@@ -411,10 +375,12 @@ with col1:
                     Please try a different image or check the model configuration.
                     """)
                 else:
+                    # Add to prediction history
                     st.session_state.prediction_history.append(disease)
                     if len(st.session_state.prediction_history) > 10:
                         st.session_state.prediction_history.pop(0)
 
+                    # ----------------- DIAGNOSIS CARD ----------------- #
                     st.subheader("📋 Diagnosis Results")
 
                     formatted_disease = (
@@ -453,6 +419,7 @@ with col1:
                     </div>
                     """, unsafe_allow_html=True)
 
+                    # ----------------- CONFIDENCE WARNINGS ------------- #
                     if confidence < 0.4:
                         st.markdown("""
                         <div class="warning-box">
@@ -482,6 +449,7 @@ with col1:
                     else:
                         st.success("**✅ High Confidence** – Diagnosis is likely reliable.")
 
+                    # ----------------- DEBUG INFORMATION ---------------- #
                     with st.expander("🔧 Technical Details"):
                         st.markdown("""
                         <div class="debug-box">
@@ -507,6 +475,7 @@ with col1:
                             st.write(f"- Min value: {np.min(raw_prediction):.6f}")
                             st.write(f"- Mean value: {np.mean(raw_prediction):.6f}")
                             
+                            # Show top 5 predictions
                             st.write("**Top 5 Predictions:**")
                             top_5_indices = np.argsort(raw_prediction)[-5:][::-1]
                             for rank, idx in enumerate(top_5_indices, start=1):
@@ -516,6 +485,7 @@ with col1:
                                 else:
                                     st.write(f"{rank}. [INDEX {idx} OUT OF RANGE] - {raw_prediction[idx]:.6f}")
 
+                    # ----------------- USER FEEDBACK ------------------- #
                     st.markdown("---")
                     st.subheader("🤔 Prediction Accuracy")
                     feedback = st.radio(
@@ -525,10 +495,10 @@ with col1:
                     )
                     if feedback == "No, this seems wrong":
                         st.warning(
-                            "Thank you for your feedback! This helps us understand model limitations "
-                            "and potential bias in the training data."
+                            "Thank you for your feedback! This helps us understand limitations of the model."
                         )
 
+                    # ----------------- CARE INSTRUCTIONS --------------- #
                     st.markdown("---")
                     st.subheader("💡 Care Instructions")
 
@@ -552,6 +522,7 @@ with col1:
             st.error(f"❌ Error processing image: {e}")
 
 with col2:
+    # Sidebar / status info
     st.subheader("System Status")
     st.write("Real-time service monitoring")
 
@@ -577,6 +548,7 @@ with col2:
         </div>
         """, unsafe_allow_html=True)
 
+    # Plant types metric
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #2E8B57, #228B22);
                 color: white; border-radius: 10px; padding: 1.2rem;
@@ -586,6 +558,7 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
 
+    # Recent predictions
     if st.session_state.prediction_history:
         st.subheader("📊 Recent Predictions")
         unique_predictions = list(dict.fromkeys(st.session_state.prediction_history[-5:]))
@@ -593,6 +566,7 @@ with col2:
             formatted_pred = pred.replace("_", " ").title()
             st.write(f"• {formatted_pred}")
 
+    # Tips
     st.subheader("💡 Tips for Best Results")
     tips = [
         "Use clear, well-lit photos",
@@ -605,7 +579,7 @@ with col2:
         st.markdown(f"""
         <div style="background: white; border-radius: 10px; padding: 1rem;
                     margin: 0.6rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
-                    border-left: 3px solid #3CB371;">
+                    border-left: 3px solid #3CB371%;">
             <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
         </div>
         """, unsafe_allow_html=True)

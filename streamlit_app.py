@@ -1,4 +1,4 @@
-# streamlit_app.py - FINAL VERSION USING SAVED KERAS MODEL (FIXED PREPROCESSING)
+# streamlit_app.py - UPDATED VERSION USING LOCAL KERAS MODEL (FIXED PREPROCESSING)
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -7,7 +7,7 @@ import json
 import os
 import chatbot_helper
 
-# 🆕 IMPORT THE SAME PREPROCESS AS TRAINING (EfficientNetB2)
+# 🆕 EfficientNet preprocessing (must match training)
 from tensorflow.keras.applications.efficientnet import preprocess_input
 
 # ----------------------- PAGE CONFIG ----------------------- #
@@ -54,7 +54,7 @@ st.markdown("""
     
     .diagnosis-card {
         background: linear-gradient(135deg, #ffffff, #f8fff8);
-        border-radius: 15px;
+        border-radius: 12px;
         padding: 1.5rem;
         margin: 1.2rem 0;
         box-shadow: 0 4px 12px rgba(46, 139, 87, 0.15);
@@ -105,20 +105,17 @@ def check_openai_setup():
     except Exception:
         return False
 
-# Path to your model on the Streamlit server
+# Updated paths - looking in current directory
 MODEL_PATH = "plant_disease_final_model.keras"
-
-# Public Drive link so others can download the model manually if needed
-MODEL_LINK = "https://drive.google.com/drive/folders/1AcD9IR_tWrfUSzMQS_hBrOktp_bztCkT"
+CLASS_NAMES_PATH = "class_names_final.json"
 
 @st.cache_resource
 def load_model():
     """Load the trained Keras model from local file."""
     if not os.path.exists(MODEL_PATH):
-        st.sidebar.error("❌ Model file not found on the server.")
-        st.sidebar.write("Please download the model from:")
-        st.sidebar.write(MODEL_LINK)
-        st.sidebar.write("and place it in the same folder as `streamlit_app.py`.")
+        st.sidebar.error("❌ Model file not found in current directory.")
+        st.sidebar.write(f"Looking for: {os.path.abspath(MODEL_PATH)}")
+        st.sidebar.write("Please make sure the model file is in the same directory as this script.")
         return None
 
     try:
@@ -133,30 +130,29 @@ def load_model():
 def load_class_names():
     """Load class names from json file."""
     try:
-        with open("class_names_final.json", "r") as f:
+        with open(CLASS_NAMES_PATH, "r") as f:
             class_names = json.load(f)
         st.sidebar.info(f"✅ Loaded {len(class_names)} plant classes")
         return class_names
     except Exception:
-        st.sidebar.warning("Could not load class_names_final.json, using default placeholder labels.")
+        st.sidebar.warning(f"Could not load {CLASS_NAMES_PATH}, using default placeholder labels.")
         return [
             "Apple_healthy",
             "Apple_apple_scab",
-            "Tomato_healthy",
+            "Tomato_healthy", 
             "Tomato_early_blight",
             "Tomato_late_blight"
         ]
 
-# 🆕 ONE CENTRAL PREPROCESSING FUNCTION
+# 🆕 Central preprocessing function, matching EfficientNet training
 def preprocess_image_for_model(image, img_size):
     """
     Convert PIL image → RGB → resize → EfficientNet preprocess → add batch dimension.
-    This MUST match whatever you used during training.
     """
     image = image.convert("RGB")
     img = image.resize(img_size)
     img_array = np.array(img).astype("float32")
-    # IMPORTANT: use EfficientNet's preprocess_input (no /255 here)
+    # IMPORTANT: use EfficientNet preprocess_input (no /255 here)
     img_array = preprocess_input(img_array)
     img_array = np.expand_dims(img_array, axis=0)
     return img_array
@@ -219,11 +215,11 @@ model = load_model()
 class_names = load_class_names()
 openai_ready = check_openai_setup()
 
-# IMPORTANT: this should match the model's input shape when you created it in Colab
+# Automatically infer image size from the model if possible
 if model is not None and hasattr(model, "input_shape") and len(model.input_shape) == 4:
-    img_size = (model.input_shape[1], model.input_shape[2])
+    img_size = (model.input_shape[1], model.input_shape[2])  # should be (224, 224)
 else:
-    img_size = (224, 224)  # fallback for EfficientNetB2
+    img_size = (224, 224)  # EfficientNetB2 fallback
 
 # ----------------------- SIDEBAR DEBUG --------------------- #
 with st.sidebar:
@@ -234,8 +230,12 @@ with st.sidebar:
     if class_names:
         st.write("Sample classes:", class_names[:5])
     st.write("Model file path:", os.path.abspath(MODEL_PATH))
-    st.write("Class names path:", os.path.abspath("class_names_final.json"))
-    st.write("Current directory files:", os.listdir("."))
+    st.write("Class names path:", os.path.abspath(CLASS_NAMES_PATH))
+    
+    # Show current directory contents for debugging
+    st.write("Current directory files:")
+    current_files = [f for f in os.listdir('.') if os.path.isfile(f)]
+    st.write(current_files[:10])  # Show first 10 files
 
 # ----------------------- MAIN HEADER ----------------------- #
 st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
@@ -248,15 +248,18 @@ st.markdown(
 
 # If model is missing, show error and stop
 if model is None:
-    st.error("""
+    st.error(f"""
     ## 🔧 Service Temporarily Unavailable
     
-    The model file **plant_disease_final_model.keras** is not available on the server.
+    The model file **{MODEL_PATH}** is not available in the current directory.
     
     Please make sure:
     - The file exists in the same directory as `streamlit_app.py`
-    - The filename is exactly correct
-    - The file matches the `class_names_final.json` label order
+    - The filename is exactly: `{MODEL_PATH}`
+    - The file matches the `{CLASS_NAMES_PATH}` label order
+    
+    **Current directory:** {os.getcwd()}
+    **Looking for:** {os.path.abspath(MODEL_PATH)}
     """)
     st.stop()
 
@@ -324,7 +327,11 @@ with col1:
                     # ----------------- DIAGNOSIS CARD ----------------- #
                     st.subheader("📋 Diagnosis Results")
 
-                    formatted_disease = disease.replace("_", " ").replace("___", " - ").replace("__", " - ")
+                    formatted_disease = (
+                        disease.replace("___", " - ")
+                               .replace("__", " - ")
+                               .replace("_", " ")
+                    )
 
                     if "healthy" in disease.lower():
                         status_emoji = "✅"
@@ -504,7 +511,7 @@ with col2:
                     border-left: 3px solid #3CB371;">
             <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
         </div>
-        """, unsafe_allow_html=True)
+        """)
 
 # ----------------------- FOOTER ---------------------------- #
 st.markdown("---")

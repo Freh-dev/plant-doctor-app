@@ -1,4 +1,4 @@
-# streamlit_app.py – final, simplified version matching EfficientNetB2+head model
+# streamlit_app.py – robust version with auto-detected preprocessing
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -105,20 +105,55 @@ def load_class_names():
         st.sidebar.error(f"❌ Error loading class names: {e}")
         return []
 
-def preprocess_image(image: Image.Image) -> np.ndarray:
-    """Resize to 224x224 RGB; no manual scaling because model handles it."""
+def model_expects_raw_0_255(model: tf.keras.Model) -> bool:
+    """
+    Detect if the model already has a Rescaling(1./255) layer near the input.
+    If yes → we should feed raw 0–255.
+    If no  → we should scale to 0–1 in Streamlit.
+    """
+    try:
+        for layer in model.layers[:5]:
+            # Some models have InputLayer first; skip that
+            if isinstance(layer, tf.keras.layers.Rescaling):
+                scale = getattr(layer, "scale", None)
+                if scale is not None and abs(scale - 1.0/255.0) < 1e-6:
+                    return True
+        return False
+    except Exception:
+        return False
+
+def preprocess_image(image: Image.Image, model: tf.keras.Model) -> np.ndarray:
+    """
+    Resize to 224x224 RGB.
+    If model has Rescaling(1./255) inside → DO NOT divide by 255 here.
+    Otherwise → scale to 0–1 here.
+    """
     if image.mode != "RGB":
         image = image.convert("RGB")
     image = image.resize((IMG_SIZE, IMG_SIZE))
-    arr = np.array(image).astype("float32")   # <-- no /255 here
+
+    expects_raw = model_expects_raw_0_255(model)
+    arr = np.array(image).astype("float32")
+
+    if expects_raw:
+        # Model will do /255 inside via Rescaling
+        scale_info = "raw 0–255 → model has Rescaling(1./255)"
+    else:
+        # We need to scale here
+        arr = arr / 255.0
+        scale_info = "scaled 0–1 in Streamlit (no Rescaling layer detected)"
+
     arr = np.expand_dims(arr, axis=0)
+
+    # Debug line so you can SEE what is happening
+    st.write(
+        "🛠️ Preprocessing debug:",
+        f"shape={arr.shape}, min={arr.min():.3f}, max={arr.max():.3f}, mean={arr.mean():.3f}, mode={scale_info}"
+    )
     return arr
 
 def predict_image(image, model, class_names):
-    arr = preprocess_image(image)
-    # quick debug
-    st.write("🛠️ Preprocessing debug:",
-             f"shape={arr.shape}, min={arr.min():.1f}, max={arr.max():.1f}, mean={arr.mean():.1f}")
+    arr = preprocess_image(image, model)
     preds = model.predict(arr, verbose=0)[0]
     idx = int(np.argmax(preds))
     if idx >= len(class_names):
@@ -159,6 +194,7 @@ with st.sidebar:
     if model is not None:
         st.write(f"Model input shape: {model.input_shape}")
         st.write(f"Model output shape: {model.output_shape}")
+        st.write(f"Has internal Rescaling(1./255): {model_expects_raw_0_255(model)}")
 
 # stop if no model
 if model is None or not class_names:
@@ -257,7 +293,7 @@ with col1:
                     """, unsafe_allow_html=True)
 
                 # Debug expander
-                with st.expander("🔧 Debug Info"):
+                with st.expander("🔧 Prediction Debug Info"):
                     st.write("Predicted class:", disease)
                     st.write("Raw confidence:", confidence)
                     if preds is not None:

@@ -1,4 +1,4 @@
-# streamlit_app.py – robust version with auto-detected preprocessing
+# streamlit_app.py – fixed version for Lambda layer issue
 import streamlit as st
 import tensorflow as tf
 import numpy as np
@@ -83,15 +83,63 @@ def check_openai_setup():
 
 @st.cache_resource
 def load_model():
+    """Load model with proper handling of Lambda layer"""
     if not os.path.exists(MODEL_PATH):
         st.sidebar.error(f"❌ Model file not found: {MODEL_PATH}")
+        st.sidebar.write(f"Looking for: {os.path.abspath(MODEL_PATH)}")
         return None
+    
     try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        st.sidebar.success("✅ Model loaded")
-        return model
+        # Define the preprocessing function that the Lambda layer uses
+        # This MUST be defined here for proper serialization
+        from tensorflow.keras.applications.efficientnet import preprocess_input
+        
+        # Register the function with keras
+        tf.keras.utils.get_custom_objects()['preprocess_input'] = preprocess_input
+        
+        # Try loading with custom objects
+        try:
+            model = tf.keras.models.load_model(
+                MODEL_PATH,
+                custom_objects={'preprocess_input': preprocess_input},
+                compile=False
+            )
+            st.sidebar.success("✅ Model loaded successfully")
+            return model
+        except Exception as e1:
+            st.sidebar.warning(f"First attempt failed: {str(e1)[:150]}")
+            
+            # Try alternative: load as weights only and rebuild architecture
+            try:
+                import keras
+                # Create custom Lambda layer that can be serialized
+                @keras.saving.register_keras_serializable()
+                class EfficientNetPreprocessor(keras.layers.Layer):
+                    def __init__(self, **kwargs):
+                        super().__init__(**kwargs)
+                        self.preprocess_fn = preprocess_input
+                    
+                    def call(self, inputs):
+                        return self.preprocess_fn(inputs)
+                    
+                    def get_config(self):
+                        config = super().get_config()
+                        return config
+                
+                # Load with the custom layer
+                model = tf.keras.models.load_model(
+                    MODEL_PATH,
+                    custom_objects={'eff_preprocess': EfficientNetPreprocessor},
+                    compile=False
+                )
+                st.sidebar.success("✅ Model loaded with custom layer")
+                return model
+            except Exception as e2:
+                st.sidebar.error(f"All loading attempts failed: {str(e2)[:150]}")
+                return None
+                
     except Exception as e:
-        st.sidebar.error(f"❌ Error loading model: {e}")
+        st.sidebar.error(f"❌ Critical error loading model: {e}")
         return None
 
 @st.cache_data
@@ -105,83 +153,44 @@ def load_class_names():
         st.sidebar.error(f"❌ Error loading class names: {e}")
         return []
 
-def model_expects_raw_0_255(model: tf.keras.Model) -> bool:
+def preprocess_image(image: Image.Image) -> np.ndarray:
     """
-    Detect if the model already has preprocessing near the input:
-    - Rescaling(1./255) layer
-    - OR a Lambda layer that wraps EfficientNet preprocess_input
-      (we named it 'eff_preprocess' in training).
-    If yes → we should feed raw 0–255.
-    If no  → we should scale to 0–1 in Streamlit.
-    """
-    try:
-        for layer in model.layers[:6]:
-            # 1) Rescaling(1./255)
-            if isinstance(layer, tf.keras.layers.Rescaling):
-                scale = getattr(layer, "scale", None)
-                if scale is not None and abs(scale - 1.0/255.0) < 1e-6:
-                    return True
-
-            # 2) Lambda(preprocess_input, name="eff_preprocess")
-            if isinstance(layer, tf.keras.layers.Lambda):
-                # Name check (we set name="eff_preprocess" in the notebook)
-                if layer.name == "eff_preprocess":
-                    return True
-                # Fallback: try to see if function name looks like preprocess_input
-                fn = getattr(layer, "function", None)
-                if fn is not None and getattr(fn, "__name__", "") == "preprocess_input":
-                    return True
-
-        return False
-    except Exception:
-        return False
-
-def preprocess_image(image: Image.Image, model: tf.keras.Model) -> np.ndarray:
-    """
-    Resize to 224x224 RGB.
-    If model has internal preprocessing (Rescaling or Lambda(preprocess_input)):
-        → DO NOT divide by 255 here (keep 0–255).
-    Otherwise:
-        → scale to 0–1 here.
+    Preprocess image for EfficientNet model
+    We apply preprocessing here instead of in the model
     """
     if image.mode != "RGB":
         image = image.convert("RGB")
     image = image.resize((IMG_SIZE, IMG_SIZE))
-
-    expects_raw = model_expects_raw_0_255(model)
+    
     arr = np.array(image).astype("float32")
-
-    if expects_raw:
-        # Model will do /255 or preprocess_input inside
-        scale_info = "raw 0–255 → model has internal preprocessing (Rescaling/Lambda)"
-    else:
-        # We need to scale here
-        arr = arr / 255.0
-        scale_info = "scaled 0–1 in Streamlit (no internal preprocessing detected)"
-
+    
+    # Apply EfficientNet preprocessing manually
+    # This replaces the Lambda layer in the model
+    from tensorflow.keras.applications.efficientnet import preprocess_input
+    arr = preprocess_input(arr)
+    
     arr = np.expand_dims(arr, axis=0)
-
-    # Debug line so you can SEE what is happening
-    st.write(
-        "🛠️ Preprocessing debug:",
-        f"shape={arr.shape}, min={arr.min():.3f}, max={arr.max():.3f}, "
-        f"mean={arr.mean():.3f}, mode={scale_info}"
-    )
     return arr
 
 def predict_image(image, model, class_names):
-    arr = preprocess_image(image, model)
-    preds = model.predict(arr, verbose=0)[0]
-    idx = int(np.argmax(preds))
-    if idx >= len(class_names):
-        return None, None, preds
-    return class_names[idx], float(preds[idx]), preds
+    """Predict with manual preprocessing"""
+    arr = preprocess_image(image)
+    try:
+        preds = model.predict(arr, verbose=0)[0]
+        idx = int(np.argmax(preds))
+        if idx >= len(class_names):
+            return None, None, preds
+        return class_names[idx], float(preds[idx]), preds
+    except Exception as e:
+        st.error(f"Prediction error: {e}")
+        return None, None, None
 
 def get_plant_advice(plant_name, disease):
     try:
         return chatbot_helper.generate_advice(plant_name, disease)
-    except Exception:
-        return "AI advice currently unavailable. Please follow standard plant care practices."
+    except Exception as e:
+        st.warning(f"AI advice unavailable: {e}")
+        return None
 
 def display_fallback_advice(plant_name, disease):
     formatted_disease = disease.replace("_", " ").replace("___", " - ").title()
@@ -200,23 +209,51 @@ model = load_model()
 class_names = load_class_names()
 openai_ready = check_openai_setup()
 
+# Stop if critical resources missing
+if model is None:
+    st.error("""
+    ## ❌ Model Failed to Load
+    
+    The model file exists but cannot be loaded due to serialization issues.
+    
+    **Quick Fix Options:**
+    1. **Re-save the model** from your notebook without the Lambda layer
+    2. **Use this workaround:** Update the model loading code to handle the Lambda layer
+    
+    **Temporary Workaround:**
+    ```python
+    # In your training notebook, replace Lambda layer with:
+    # x = keras.layers.Rescaling(1./255)(input_layer)  # Instead of preprocess_input
+    # Then re-save the model
+    ```
+    """)
+    st.stop()
+
+if not class_names:
+    st.error("Class names could not be loaded. Please check class_names_final.json")
+    st.stop()
+
 # ------------- SIDEBAR ------------------
 with st.sidebar:
-    st.header("🔧 Debug Info")
-    st.write(f"Model loaded: {model is not None}")
-    st.write(f"Number of classes: {len(class_names)}")
-    st.write(f"OpenAI ready: {openai_ready}")
-    st.write(f"Model path: {os.path.abspath(MODEL_PATH)}")
-    st.write(f"Class names path: {os.path.abspath(CLASS_NAMES_PATH)}")
-    if model is not None:
-        st.write(f"Model input shape: {model.input_shape}")
-        st.write(f"Model output shape: {model.output_shape}")
-        st.write(f"Has internal preprocessing (Rescaling/Lambda): {model_expects_raw_0_255(model)}")
-
-# stop if no model
-if model is None or not class_names:
-    st.error("Model or class names missing. Please upload both to the app folder.")
-    st.stop()
+    st.header("🔧 System Status")
+    
+    status_col1, status_col2 = st.columns(2)
+    with status_col1:
+        st.metric("Model Status", "✅ Active" if model else "❌ Failed")
+    with status_col2:
+        st.metric("Classes", len(class_names))
+    
+    st.divider()
+    
+    st.subheader("Debug Info")
+    st.write(f"Model: {os.path.basename(MODEL_PATH)}")
+    st.write(f"Input shape: {model.input_shape}")
+    st.write(f"Output shape: {model.output_shape}")
+    st.write(f"OpenAI: {'✅ Ready' if openai_ready else '⚠️ Basic Mode'}")
+    
+    if st.checkbox("Show Model Layers"):
+        for i, layer in enumerate(model.layers[:5]):  # Show first 5 layers
+            st.write(f"{i}: {layer.name} - {layer.__class__.__name__}")
 
 # ------------- MAIN HEADER --------------
 st.markdown('<h1 class="main-header">🌿 Plant Doctor</h1>', unsafe_allow_html=True)
@@ -235,7 +272,7 @@ with col1:
     uploaded_file = st.file_uploader(
         "Drag and drop your file here or click to browse",
         type=SUPPORTED_TYPES,
-        help=f"Supported formats: {', '.join(SUPPORTED_TYPES)} • Max 200MB",
+        help=f"Supported formats: {', '.join(SUPPORTED_TYPES)}",
         label_visibility="collapsed",
     )
 
@@ -245,102 +282,129 @@ with col1:
             <div style="font-size: 3rem; margin-bottom: 1rem;">🌿</div>
             <h3 style="color: #2E8B57; margin-bottom: 0.5rem;">Drag & Drop Your Plant Leaf Here</h3>
             <p style="color: #666; margin-bottom: 0.5rem;">or click the area above to browse files</p>
-            <p style="color: #888; font-size: 0.9rem; margin: 0;">JPG, PNG, JPEG • Max 200MB</p>
         </div>
         """, unsafe_allow_html=True)
 
     if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        st.success("✅ File uploaded!")
-        st.write(f"**Filename:** {uploaded_file.name}")
-        st.image(image, caption="📷 Your Plant Leaf", width=400)
-
-        if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
-            with st.spinner("🔬 Analyzing your plant..."):
-                disease, confidence, preds = predict_image(image, model, class_names)
-
-            if disease is None:
-                st.error("Prediction index out of range. Check class_names_final.json.")
-            else:
-                st.session_state.prediction_history.append(disease)
-                formatted = (disease.replace('___', ' - ')
-                                   .replace('__', ' - ')
-                                   .replace('_', ' '))
-
-                # Diagnosis card
-                st.subheader("📋 Diagnosis Results")
-                healthy = "healthy" in disease.lower()
-                emoji = "✅" if healthy else "⚠️"
-                status = "Healthy Plant" if healthy else "Needs Attention"
-                color = "#2E8B57" if healthy else "#FFA500"
-
-                st.markdown(f"""
-                <div class="diagnosis-card">
-                    <div style="text-align: center; margin-bottom: 1.2rem;">
-                        <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">{emoji}</div>
-                        <span style="background: {color}; color: white; padding: 0.4rem 0.8rem;
-                                     border-radius: 15px; font-weight: 600;">
-                            {status}
-                        </span>
-                    </div>
-                    <h3 style="color: {color}; text-align: center; margin-bottom: 0.8rem;">
-                        {formatted}
-                    </h3>
-                    <div style="text-align: center;">
-                        <p style="font-size: 1.1rem; color: #666; margin-bottom: 0.5rem;">Confidence</p>
-                        <h2 style="color: {color}; font-size: 2rem; margin: 0.3rem 0;">
-                            {confidence:.1%}
-                        </h2>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Confidence warning
-                if confidence < 0.4:
-                    st.markdown("""
-                    <div class="warning-box">
-                        <h4>⚠️ Low Confidence</h4>
-                        <p>The model is not very confident. Try:</p>
-                        <ul>
-                            <li>Using a clearer, well-lit photo</li>
-                            <li>Focusing on a single leaf</li>
-                            <li>Uploading multiple images</li>
-                        </ul>
+        try:
+            image = Image.open(uploaded_file)
+            st.success("✅ File uploaded!")
+            st.image(image, caption="📷 Your Plant Leaf", width=350)
+            
+            # Show image info
+            col_info1, col_info2 = st.columns(2)
+            with col_info1:
+                st.write(f"**Size:** {image.size[0]}×{image.size[1]}")
+            with col_info2:
+                st.write(f"**Mode:** {image.mode}")
+            
+            if st.button("🔍 Analyze Plant Health", type="primary", use_container_width=True):
+                with st.spinner("🔬 Analyzing your plant..."):
+                    disease, confidence, preds = predict_image(image, model, class_names)
+                
+                if disease is None or confidence is None:
+                    st.error("Failed to make prediction. Please try another image.")
+                else:
+                    # Store in history
+                    st.session_state.prediction_history.append({
+                        'disease': disease,
+                        'confidence': confidence,
+                        'timestamp': st.session_state.get('timestamp', 'now')
+                    })
+                    
+                    # Format disease name
+                    formatted = disease.replace('___', ' - ').replace('__', ' - ').replace('_', ' ')
+                    
+                    # Diagnosis card
+                    st.subheader("📋 Diagnosis Results")
+                    healthy = "healthy" in disease.lower()
+                    emoji = "✅" if healthy else "⚠️"
+                    status = "Healthy Plant" if healthy else "Needs Attention"
+                    color = "#2E8B57" if healthy else "#FFA500"
+                    
+                    st.markdown(f"""
+                    <div class="diagnosis-card">
+                        <div style="text-align: center; margin-bottom: 1.2rem;">
+                            <div style="font-size: 2.5rem; margin-bottom: 0.8rem;">{emoji}</div>
+                            <span style="background: {color}; color: white; padding: 0.4rem 0.8rem;
+                                         border-radius: 15px; font-weight: 600;">
+                                {status}
+                            </span>
+                        </div>
+                        <h3 style="color: {color}; text-align: center; margin-bottom: 0.8rem;">
+                            {formatted}
+                        </h3>
+                        <div style="text-align: center;">
+                            <p style="font-size: 1.1rem; color: #666; margin-bottom: 0.5rem;">Confidence</p>
+                            <h2 style="color: {color}; font-size: 2rem; margin: 0.3rem 0;">
+                                {confidence:.1%}
+                            </h2>
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
-
-                # Debug expander
-                with st.expander("🔧 Prediction Debug Info"):
-                    st.write("Predicted class:", disease)
-                    st.write("Raw confidence:", confidence)
+                    
+                    # Confidence warning
+                    if confidence < 0.4:
+                        st.warning("""
+                        ⚠️ **Low Confidence Warning**
+                        The model is not very confident in this prediction. For best results:
+                        - Use a clear, well-lit photo
+                        - Focus on a single leaf
+                        - Avoid blurry or dark images
+                        - Try multiple angles
+                        """)
+                    
+                    # Top predictions
                     if preds is not None:
-                        top5 = np.argsort(preds)[-5:][::-1]
-                        st.write("Top 5 predictions:")
-                        for i in top5:
-                            st.write(f"- {class_names[i]}: {preds[i]:.3f} ({preds[i]*100:.1f}%)")
-
-                # Care advice
-                st.markdown("---")
-                st.subheader("💡 Care Instructions")
-                plant_name = disease.split("_")[0] if "_" in disease else "plant"
-
-                if openai_ready:
-                    with st.spinner("🤖 Generating AI care advice..."):
-                        advice = get_plant_advice(plant_name, disease)
-                    st.info(advice)
-                else:
-                    display_fallback_advice(plant_name, disease)
+                        with st.expander("🔍 See Top Predictions"):
+                            top_indices = np.argsort(preds)[-5:][::-1]
+                            for i, idx in enumerate(top_indices):
+                                prob = preds[idx]
+                                bar_width = int(prob * 200)
+                                st.markdown(f"""
+                                **{i+1}. {class_names[idx].replace('_', ' ')}**
+                                <div style="background: #e0e0e0; width: 200px; height: 10px; border-radius: 5px; margin: 2px 0 10px 0;">
+                                    <div style="background: {'#2E8B57' if i==0 else '#4CAF50'}; width: {bar_width}px; height: 10px; border-radius: 5px;"></div>
+                                </div>
+                                {prob:.1%}
+                                """, unsafe_allow_html=True)
+                    
+                    # Care advice
+                    st.markdown("---")
+                    st.subheader("💡 Care Instructions")
+                    
+                    # Extract plant name
+                    if "___" in disease:
+                        plant_name = disease.split("___")[0]
+                    elif "__" in disease:
+                        plant_name = disease.split("__")[0]
+                    else:
+                        plant_name = "Plant"
+                    
+                    if openai_ready:
+                        with st.spinner("🤖 Generating AI care advice..."):
+                            advice = get_plant_advice(plant_name, disease)
+                        if advice:
+                            st.success(advice)
+                        else:
+                            display_fallback_advice(plant_name, disease)
+                    else:
+                        display_fallback_advice(plant_name, disease)
+                        
+        except Exception as e:
+            st.error(f"Error processing image: {e}")
 
 with col2:
-    st.subheader("System Status")
-    st.write("Real-time service monitoring")
+    st.subheader("📊 System Status")
+    
+    # Status cards
     st.markdown("""
     <div class="status-card">
         <h4 style="color: #2E8B57; margin-bottom: 0.3rem;">✅ Model Active</h4>
         <p style="color: #666; margin: 0; font-size: 0.9rem;">Plant diagnosis ready</p>
     </div>
     """, unsafe_allow_html=True)
-
+    
     if openai_ready:
         st.markdown("""
         <div class="status-card">
@@ -355,7 +419,7 @@ with col2:
             <p style="color: #666; margin: 0; font-size: 0.9rem;">Standard care tips only</p>
         </div>
         """, unsafe_allow_html=True)
-
+    
     # Plant types metric
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #2E8B57, #228B22);
@@ -365,12 +429,16 @@ with col2:
         <p style="margin: 0; opacity: 0.9; font-size: 0.9rem;">Plant Types Supported</p>
     </div>
     """, unsafe_allow_html=True)
-
+    
+    # Recent predictions
     if st.session_state.prediction_history:
-        st.subheader("📊 Recent Predictions")
-        for pred in st.session_state.prediction_history[-5:]:
-            st.write("•", pred.replace("_", " ").replace("___", " - ").title())
-
+        st.subheader("📋 Recent Predictions")
+        for i, pred in enumerate(st.session_state.prediction_history[-3:]):
+            disease_name = pred['disease'].replace("_", " ").replace("___", " - ").title()
+            confidence = pred.get('confidence', 0)
+            st.write(f"{i+1}. **{disease_name}** ({confidence:.0%})")
+    
+    # Tips
     st.subheader("💡 Tips for Best Results")
     tips = [
         "Use clear, well-lit photos",
@@ -380,18 +448,22 @@ with col2:
     ]
     for tip in tips:
         st.markdown(f"""
-        <div style="background: white; border-radius: 10px; padding: 1rem;
-                    margin: 0.6rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+        <div style="background: white; border-radius: 10px; padding: 0.8rem;
+                    margin: 0.5rem 0; box-shadow: 0 2px 6px rgba(0,0,0,0.08);
                     border-left: 3px solid #3CB371;">
             <p style="margin: 0; color: #555; font-size: 0.9rem;">• {tip}</p>
         </div>
         """, unsafe_allow_html=True)
 
+# Footer
 st.markdown("---")
 st.markdown("""
-<div style="text-align: center; color: #666; padding: 1.5rem 0;">
+<div style="text-align: center; color: #666; padding: 1rem 0;">
     <p style="margin: 0; font-size: 0.9rem;">
         <strong>AI-powered plant health analysis</strong> • Keep your plants thriving 🌱
+    </p>
+    <p style="margin: 0; font-size: 0.8rem; color: #999;">
+        Model: EfficientNetB2 • 38 plant disease classes
     </p>
 </div>
 """, unsafe_allow_html=True)

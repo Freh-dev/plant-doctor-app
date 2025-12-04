@@ -107,17 +107,31 @@ def load_class_names():
 
 def model_expects_raw_0_255(model: tf.keras.Model) -> bool:
     """
-    Detect if the model already has a Rescaling(1./255) layer near the input.
+    Detect if the model already has preprocessing near the input:
+    - Rescaling(1./255) layer
+    - OR a Lambda layer that wraps EfficientNet preprocess_input
+      (we named it 'eff_preprocess' in training).
     If yes → we should feed raw 0–255.
     If no  → we should scale to 0–1 in Streamlit.
     """
     try:
-        for layer in model.layers[:5]:
-            # Some models have InputLayer first; skip that
+        for layer in model.layers[:6]:
+            # 1) Rescaling(1./255)
             if isinstance(layer, tf.keras.layers.Rescaling):
                 scale = getattr(layer, "scale", None)
                 if scale is not None and abs(scale - 1.0/255.0) < 1e-6:
                     return True
+
+            # 2) Lambda(preprocess_input, name="eff_preprocess")
+            if isinstance(layer, tf.keras.layers.Lambda):
+                # Name check (we set name="eff_preprocess" in the notebook)
+                if layer.name == "eff_preprocess":
+                    return True
+                # Fallback: try to see if function name looks like preprocess_input
+                fn = getattr(layer, "function", None)
+                if fn is not None and getattr(fn, "__name__", "") == "preprocess_input":
+                    return True
+
         return False
     except Exception:
         return False
@@ -125,8 +139,10 @@ def model_expects_raw_0_255(model: tf.keras.Model) -> bool:
 def preprocess_image(image: Image.Image, model: tf.keras.Model) -> np.ndarray:
     """
     Resize to 224x224 RGB.
-    If model has Rescaling(1./255) inside → DO NOT divide by 255 here.
-    Otherwise → scale to 0–1 here.
+    If model has internal preprocessing (Rescaling or Lambda(preprocess_input)):
+        → DO NOT divide by 255 here (keep 0–255).
+    Otherwise:
+        → scale to 0–1 here.
     """
     if image.mode != "RGB":
         image = image.convert("RGB")
@@ -136,19 +152,20 @@ def preprocess_image(image: Image.Image, model: tf.keras.Model) -> np.ndarray:
     arr = np.array(image).astype("float32")
 
     if expects_raw:
-        # Model will do /255 inside via Rescaling
-        scale_info = "raw 0–255 → model has Rescaling(1./255)"
+        # Model will do /255 or preprocess_input inside
+        scale_info = "raw 0–255 → model has internal preprocessing (Rescaling/Lambda)"
     else:
         # We need to scale here
         arr = arr / 255.0
-        scale_info = "scaled 0–1 in Streamlit (no Rescaling layer detected)"
+        scale_info = "scaled 0–1 in Streamlit (no internal preprocessing detected)"
 
     arr = np.expand_dims(arr, axis=0)
 
     # Debug line so you can SEE what is happening
     st.write(
         "🛠️ Preprocessing debug:",
-        f"shape={arr.shape}, min={arr.min():.3f}, max={arr.max():.3f}, mean={arr.mean():.3f}, mode={scale_info}"
+        f"shape={arr.shape}, min={arr.min():.3f}, max={arr.max():.3f}, "
+        f"mean={arr.mean():.3f}, mode={scale_info}"
     )
     return arr
 
@@ -194,7 +211,7 @@ with st.sidebar:
     if model is not None:
         st.write(f"Model input shape: {model.input_shape}")
         st.write(f"Model output shape: {model.output_shape}")
-        st.write(f"Has internal Rescaling(1./255): {model_expects_raw_0_255(model)}")
+        st.write(f"Has internal preprocessing (Rescaling/Lambda): {model_expects_raw_0_255(model)}")
 
 # stop if no model
 if model is None or not class_names:
